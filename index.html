@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Visor de Ángulos Radiológicos — Pie y Columna</title>
+<style>
+  :root {
+    --surface-1: #f7f7f5;
+    --surface-2: #eeeeec;
+    --border: #d9d9d6;
+    --text-primary: #1a1a19;
+    --text-secondary: #6b6b68;
+    --accent: #378ADD;
+    --radius: 10px;
+    --font-mono: 'SFMono-Regular', Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #fff;
+    color: var(--text-primary);
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  p.subtitle { color: var(--text-secondary); font-size: 13px; margin-top: 0; margin-bottom: 20px; }
+  button {
+    border: none; border-radius: 8px; background: var(--accent); color: #fff;
+    height: 34px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button:hover { opacity: 0.9; }
+  input, select {
+    border: 1px solid var(--border); border-radius: 8px; height: 34px; padding: 0 10px; font-size: 13px;
+  }
+  #app { display:flex; flex-direction:column; gap:12px; }
+</style>
+</head>
+<body>
+<h1>Visor de Ángulos Radiológicos — Pie y Columna</h1>
+<p class="subtitle">Marcado manual de puntos anatómicos, agrupado por patología, con puntos reutilizables entre mediciones. Uso educativo/de apoyo — no reemplaza el juicio clínico.</p>
+
+<div id="app">
+  <div id="pathTabs" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <button id="btnLoad">Cargar imagen JPG</button>
+    <input type="file" id="fileInput" accept="image/*" style="display:none;" />
+    <button id="btnReset" style="background:var(--surface-2); color:var(--text-primary);">Reiniciar puntos de este ángulo</button>
+    <span id="status" style="font-size:13px; color:var(--text-secondary);">Carga una imagen para comenzar</span>
+  </div>
+
+  <div id="angleChips" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+
+  <div style="position:relative; width:100%; background:var(--surface-1); border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+    <canvas id="cv" style="width:100%; display:block; cursor:crosshair;"></canvas>
+  </div>
+
+  <div id="partsList" style="display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--text-secondary);"></div>
+
+  <div id="cobbLabels" style="display:none; gap:8px; flex-wrap:wrap;">
+    <select id="curveType">
+      <option value="Torácica">Torácica</option>
+      <option value="Lumbar">Lumbar</option>
+      <option value="Toracolumbar">Toracolumbar</option>
+    </select>
+    <input id="evsLabel" type="text" placeholder="Etiqueta EVS (ej. T5)" />
+    <input id="eviLabel" type="text" placeholder="Etiqueta EVI (ej. T12)" />
+    <button id="btnNewCurve">Agregar curva</button>
+  </div>
+
+  <div id="resultCard" style="display:none; background:var(--surface-1); border-radius:var(--radius); padding:1rem; border:1px solid var(--border);">
+    <p style="font-size:13px; color:var(--text-secondary); margin:0 0 8px;">Mediciones de esta patología</p>
+    <div id="resultSummary" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;"></div>
+    <p style="font-size:13px; color:var(--text-secondary); margin:0 0 6px;">Salida JSON</p>
+    <pre id="resultJson" style="font-size:12px; font-family:var(--font-mono); background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); padding:10px; margin:0; overflow-x:auto; white-space:pre-wrap; word-break:break-all;"></pre>
+  </div>
+
+  <p style="font-size:11px; color:var(--text-secondary); margin-top:20px;">
+    Herramienta de apoyo para marcado manual de ángulos radiológicos. No realiza detección automática ni diagnóstico. Las mediciones dependen de la ubicación de los puntos marcados por el usuario.
+  </p>
+</div>
+
+<script>
+const LANDMARKS = {
+  axis_1mtt: { label: 'Eje 1er metatarsiano (base → cabeza)', count: 2 },
+  axis_2mtt: { label: 'Eje 2º metatarsiano (base → cabeza)', count: 2 },
+  axis_prox_phalanx_hallux: { label: 'Eje falange proximal del hallux (base → cabeza)', count: 2 },
+  artic_surface_distal_1mtt: { label: 'Superficie articular distal 1er MTT (medial → lateral)', count: 2 },
+  axis_midfoot_medial: { label: 'Cara medial del mediopié (inicio → fin)', count: 2 },
+  axis_midfoot_lateral: { label: 'Cara lateral del mediopié (inicio → fin)', count: 2 },
+  axis_talus: { label: 'Eje del astrágalo (posterior → anterior)', count: 2 },
+  axis_calcaneus: { label: 'Eje del calcáneo (posterior → anterior)', count: 2 },
+  point_calcaneus_inferior: { label: 'Punto más inferior del calcáneo', count: 1 },
+  point_talonavicular_inferior: { label: 'Punto más inferior articulación astrágalo-escafoidea', count: 1 },
+  point_1mtt_head_inferior: { label: 'Punto más inferior cabeza 1er metatarsiano', count: 1 },
+  point_sesamoid_inferior: { label: 'Polo inferior sesamoideo interno', count: 1 },
+  calcaneus_inferior_line: { label: 'Borde inferior del calcáneo (posterior → apófisis anterior)', count: 2 }
+};
+
+const PATHOLOGIES = [
+  { id: 'hallux', name: 'Hallux valgus / Metatarso aducto', projection: 'Dorsoplantar (AP) con carga',
+    angles: [
+      { id: 'im12', name: 'Ángulo intermetatarsiano 1-2 (IM1-2)', construction: 'two_lines',
+        parts: ['axis_1mtt','axis_2mtt'], classify: a => a < 9 ? 'Normal' : 'Aumentado (metatarsus primus varus)' },
+      { id: 'hva', name: 'Ángulo de Hallux Valgus (HVA)', construction: 'two_lines',
+        parts: ['axis_1mtt','axis_prox_phalanx_hallux'], classify: a => a < 15 ? 'Normal' : 'Hallux valgus' },
+      { id: 'dasa', name: 'DASA (Distal Articular Set Angle)', construction: 'two_lines',
+        parts: ['axis_1mtt','artic_surface_distal_1mtt'], classify: a => a < 6 ? 'Normal' : 'Aumentado' },
+      { id: 'metaducto', name: 'Metatarso aducto (eje mediopié)', construction: 'perp_bisector',
+        parts: ['axis_2mtt','axis_midfoot_medial','axis_midfoot_lateral'],
+        classify: a => a < 15 ? 'Normal' : (a <= 20 ? 'Leve' : (a <= 25 ? 'Moderado' : 'Severo')) }
+    ]
+  },
+  { id: 'pieplanocavo', name: 'Pie plano / Pie cavo', projection: 'Dorsoplantar y Lateral con carga',
+    angles: [
+      { id: 'kite', name: 'Ángulo de Kite (divergencia talocalcánea AP)', construction: 'two_lines', projTag: 'AP',
+        parts: ['axis_talus','axis_calcaneus'], classify: a => a < 15 ? 'Bajo (tendencia varo)' : (a <= 25 ? 'Normal' : 'Aumentado (pie plano)') },
+      { id: 'meary', name: 'Ángulo de Meary (talo-1er MTT)', construction: 'two_lines', projTag: 'Lateral',
+        parts: ['axis_talus','axis_1mtt'], classify: a => a < 4 ? 'Normal' : 'Alterado (revisar dirección: plano si abre plantar, cavo si abre dorsal)' },
+      { id: 'costabartani', name: 'Ángulo de Costa-Bártani (bóveda plantar)', construction: 'vertex', projTag: 'Lateral',
+        parts: ['point_calcaneus_inferior','point_talonavicular_inferior','point_1mtt_head_inferior'],
+        classify: a => a < 120 ? 'Pie cavo' : (a <= 130 ? 'Normal' : 'Pie plano') },
+      { id: 'djian', name: 'Ángulo de Djian-Annonier', construction: 'vertex', projTag: 'Lateral',
+        parts: ['point_calcaneus_inferior','point_talonavicular_inferior','point_sesamoid_inferior'],
+        classify: a => a < 115 ? 'Pie cavo' : (a <= 130 ? 'Normal' : 'Pie plano') },
+      { id: 'calcpitch', name: 'Calcaneal pitch (inclinación calcánea)', construction: 'vs_horizontal', projTag: 'Lateral',
+        parts: ['calcaneus_inferior_line'], classify: a => a < 20 ? 'Disminuido (pie plano)' : (a <= 25 ? 'Normal' : 'Aumentado (pie cavo)') }
+    ]
+  },
+  { id: 'escoliosis', name: 'Escoliosis (Ángulo de Cobb)', projection: 'Columna completa AP/PA', isCobb: true }
+];
+
+const palette = ['#D85A30','#378ADD','#639922','#B85CD6','#D6A230','#4FA9A2'];
+
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+const fileInput = document.getElementById('fileInput');
+const status = document.getElementById('status');
+const resultCard = document.getElementById('resultCard');
+const resultSummary = document.getElementById('resultSummary');
+const resultJson = document.getElementById('resultJson');
+const partsListEl = document.getElementById('partsList');
+const angleChipsEl = document.getElementById('angleChips');
+const pathTabsEl = document.getElementById('pathTabs');
+const cobbLabels = document.getElementById('cobbLabels');
+const btnNewCurve = document.getElementById('btnNewCurve');
+const curveTypeSel = document.getElementById('curveType');
+const evsLabelInput = document.getElementById('evsLabel');
+const eviLabelInput = document.getElementById('eviLabel');
+
+let img = null, scale = 1;
+let currentPathIdx = 0;
+let currentAngleId = null;
+let landmarkStore = {};
+let partsProgress = [];
+let measurements = {};
+let cobbCurves = [];
+let cobbInProgress = [];
+
+function currentPath() { return PATHOLOGIES[currentPathIdx]; }
+function currentAngleDef() {
+  const p = currentPath();
+  if (p.isCobb) return null;
+  return p.angles.find(a => a.id === currentAngleId);
+}
+
+function renderPathTabs() {
+  pathTabsEl.innerHTML = '';
+  PATHOLOGIES.forEach((p, idx) => {
+    const btn = document.createElement('button');
+    btn.textContent = p.name;
+    btn.style.width = 'auto'; btn.style.padding = '0 14px'; btn.style.fontSize = '13px';
+    if (idx !== currentPathIdx) { btn.style.background = 'var(--surface-2)'; btn.style.color = 'var(--text-primary)'; }
+    btn.addEventListener('click', () => { currentPathIdx = idx; currentAngleId = null; cobbCurves = []; refreshAll(); });
+    pathTabsEl.appendChild(btn);
+  });
+}
+
+function renderAngleChips() {
+  const p = currentPath();
+  angleChipsEl.innerHTML = '';
+  if (p.isCobb) { angleChipsEl.style.display = 'none'; cobbLabels.style.display = 'flex'; return; }
+  cobbLabels.style.display = 'none';
+  angleChipsEl.style.display = 'flex';
+  p.angles.forEach(a => {
+    const chip = document.createElement('button');
+    const done = measurements[p.id] && measurements[p.id][a.id];
+    chip.textContent = (done ? '✓ ' : '') + a.name + (a.projTag ? ' ['+a.projTag+']' : '');
+    chip.style.width = 'auto'; chip.style.padding = '0 10px'; chip.style.fontSize = '12px';
+    if (a.id !== currentAngleId) { chip.style.background = 'var(--surface-2)'; chip.style.color = 'var(--text-primary)'; }
+    chip.addEventListener('click', () => { selectAngle(a.id); });
+    angleChipsEl.appendChild(chip);
+  });
+}
+
+function selectAngle(angleId) {
+  currentAngleId = angleId;
+  const def = currentAngleDef();
+  partsProgress = def.parts.map(landmarkId => {
+    const stored = landmarkStore[landmarkId];
+    const count = LANDMARKS[landmarkId].count;
+    if (stored && stored.length === count) return { landmarkId, points: stored.slice(), fromStore: true };
+    return { landmarkId, points: [], fromStore: false };
+  });
+  refreshCanvasAndHelp();
+}
+
+function refreshAll() { renderPathTabs(); renderAngleChips(); refreshCanvasAndHelp(); renderResults(); }
+
+function firstIncompletePartIndex() {
+  return partsProgress.findIndex(pp => pp.points.length < LANDMARKS[pp.landmarkId].count);
+}
+
+function renderPartsList() {
+  const p = currentPath();
+  partsListEl.innerHTML = '';
+  if (p.isCobb || !currentAngleId) return;
+  partsProgress.forEach((pp, i) => {
+    const lm = LANDMARKS[pp.landmarkId];
+    const complete = pp.points.length === lm.count;
+    const row = document.createElement('div');
+    row.style.display = 'flex'; row.style.gap = '8px'; row.style.alignItems = 'center';
+    const tag = complete ? (pp.fromStore ? '♻️ reutilizado' : '✓ marcado') : '○ pendiente';
+    row.innerHTML = `<span>${tag} — <b style="color:var(--text-primary); font-weight:500;">${lm.label}</b></span>`;
+    if (complete) {
+      const btn = document.createElement('button');
+      btn.textContent = 'Volver a marcar';
+      btn.style.width = 'auto'; btn.style.padding = '0 8px'; btn.style.fontSize = '11px';
+      btn.style.background = 'var(--surface-2)'; btn.style.color = 'var(--text-secondary)';
+      btn.addEventListener('click', () => {
+        partsProgress[i] = { landmarkId: pp.landmarkId, points: [], fromStore: false };
+        status.textContent = `Vuelve a marcar: ${lm.label}`;
+        draw(); renderPartsList();
+      });
+      row.appendChild(btn);
+    }
+    partsListEl.appendChild(row);
+  });
+}
+
+function refreshCanvasAndHelp() {
+  const p = currentPath();
+  if (p.isCobb) {
+    status.textContent = img ? 'Marca el punto 1 (platillo superior EVS)' : 'Carga una imagen para comenzar';
+  } else if (!currentAngleId) {
+    status.textContent = img ? 'Selecciona un ángulo de la lista de arriba' : 'Carga una imagen para comenzar';
+  } else {
+    const idx = firstIncompletePartIndex();
+    if (idx === -1) {
+      status.textContent = 'Todos los puntos listos (algunos reutilizados). Ángulo calculado abajo.';
+    } else {
+      const lm = LANDMARKS[partsProgress[idx].landmarkId];
+      const n = partsProgress[idx].points.length;
+      status.textContent = img ? `Marca punto ${n+1}/${lm.count} de: ${lm.label}` : 'Carga una imagen para comenzar';
+    }
+  }
+  renderPartsList();
+  draw();
+  if (!p.isCobb && currentAngleId && firstIncompletePartIndex() === -1) computeAndStore();
+}
+
+document.getElementById('btnLoad').addEventListener('click', () => fileInput.click());
+document.getElementById('btnReset').addEventListener('click', () => { if (currentAngleId) selectAngle(currentAngleId); });
+
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const im = new Image();
+    im.onload = () => {
+      img = im;
+      const maxW = 640;
+      scale = Math.min(1, maxW / img.width);
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      landmarkStore = {}; measurements = {}; cobbCurves = []; currentAngleId = null; partsProgress = [];
+      resultCard.style.display = 'none';
+      refreshAll();
+    };
+    im.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+canvas.addEventListener('click', (e) => {
+  if (!img) return;
+  const p = currentPath();
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  if (p.isCobb) {
+    cobbInProgress.push({x, y});
+    draw();
+    if (cobbInProgress.length < 4) {
+      const labels = ['platillo superior EVS, extremo 1','platillo superior EVS, extremo 2','platillo inferior EVI, extremo 1','platillo inferior EVI, extremo 2'];
+      status.textContent = `Marca el punto ${cobbInProgress.length+1} (${labels[cobbInProgress.length]})`;
+    } else {
+      status.textContent = 'Puntos listos. Completa las etiquetas y presiona "Agregar curva".';
+    }
+    return;
+  }
+
+  if (!currentAngleId) return;
+  const idx = firstIncompletePartIndex();
+  if (idx === -1) return;
+  partsProgress[idx].points.push({x, y});
+  draw();
+
+  const lm = LANDMARKS[partsProgress[idx].landmarkId];
+  if (partsProgress[idx].points.length < lm.count) {
+    status.textContent = `Marca punto ${partsProgress[idx].points.length+1}/${lm.count} de: ${lm.label}`;
+    renderPartsList();
+  } else {
+    renderPartsList();
+    const nextIdx = firstIncompletePartIndex();
+    if (nextIdx === -1) {
+      computeAndStore();
+      status.textContent = 'Medición completa. Puntos reutilizables quedan guardados para otros ángulos.';
+    } else {
+      const nlm = LANDMARKS[partsProgress[nextIdx].landmarkId];
+      status.textContent = `Marca punto 1/${nlm.count} de: ${nlm.label}`;
+    }
+  }
+});
+
+function angleBetweenVectors(v1, v2, minSupplement) {
+  const dot = v1.x*v2.x + v1.y*v2.y;
+  const mag1 = Math.hypot(v1.x, v1.y), mag2 = Math.hypot(v2.x, v2.y);
+  let rad = Math.acos(Math.max(-1, Math.min(1, dot/(mag1*mag2))));
+  let deg = rad * 180 / Math.PI;
+  return minSupplement ? Math.min(deg, 180 - deg) : deg;
+}
+
+function flattenPoints() { return partsProgress.reduce((acc, pp) => acc.concat(pp.points), []); }
+
+function computeAngleForDef(def, pts) {
+  if (def.construction === 'two_lines') {
+    const v1 = {x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y};
+    const v2 = {x: pts[3].x - pts[2].x, y: pts[3].y - pts[2].y};
+    return angleBetweenVectors(v1, v2, true);
+  }
+  if (def.construction === 'vertex') {
+    const v1 = {x: pts[0].x - pts[1].x, y: pts[0].y - pts[1].y};
+    const v2 = {x: pts[2].x - pts[1].x, y: pts[2].y - pts[1].y};
+    return angleBetweenVectors(v1, v2, false);
+  }
+  if (def.construction === 'perp_bisector') {
+    const vA = {x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y};
+    const medMid = {x:(pts[2].x+pts[3].x)/2, y:(pts[2].y+pts[3].y)/2};
+    const latMid = {x:(pts[4].x+pts[5].x)/2, y:(pts[4].y+pts[5].y)/2};
+    const dB = {x: latMid.x - medMid.x, y: latMid.y - medMid.y};
+    const vC = {x: -dB.y, y: dB.x};
+    return angleBetweenVectors(vA, vC, true);
+  }
+  if (def.construction === 'vs_horizontal') {
+    const v1 = {x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y};
+    return angleBetweenVectors(v1, {x:1,y:0}, true);
+  }
+  return null;
+}
+
+function computeAndStore() {
+  const p = currentPath();
+  const def = currentAngleDef();
+  const pts = flattenPoints();
+  const angleDeg = computeAngleForDef(def, pts);
+  const rounded = Math.round(angleDeg * 10) / 10;
+  const severity = def.classify(rounded);
+  if (!measurements[p.id]) measurements[p.id] = {};
+  measurements[p.id][def.id] = { angleDeg: rounded, severity, points: pts.map(pt => ({...pt})) };
+  partsProgress.forEach(pp => { landmarkStore[pp.landmarkId] = pp.points.map(pt => ({...pt})); });
+  renderAngleChips();
+  renderResults();
+  draw();
+}
+
+function draw() {
+  if (!img) return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const p = currentPath();
+
+  if (!p.isCobb) {
+    if (measurements[p.id]) {
+      Object.keys(measurements[p.id]).forEach((angleId, i) => {
+        if (angleId === currentAngleId) return;
+        const m = measurements[p.id][angleId];
+        drawDefLines(p.angles.find(a=>a.id===angleId), m.points, palette[i % palette.length], 0.4);
+      });
+    }
+    if (currentAngleId) {
+      const def = currentAngleDef();
+      const pts = flattenPoints();
+      pts.forEach((pt,i) => {
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, 5, 0, Math.PI*2);
+        ctx.fillStyle = i % 2 === 0 ? '#D85A30' : '#378ADD';
+        ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText(String(i+1), pt.x+8, pt.y-8);
+      });
+      drawDefLines(def, pts, null, 1, true);
+    }
+  } else {
+    cobbCurves.forEach((c, idx) => drawSimpleLines(c.points, palette[idx % palette.length], 1));
+    if (cobbInProgress.length > 0) {
+      cobbInProgress.forEach((pt,i) => {
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, 5, 0, Math.PI*2);
+        ctx.fillStyle = i % 2 === 0 ? '#D85A30' : '#378ADD';
+        ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText(String(i+1), pt.x+8, pt.y-8);
+      });
+      if (cobbInProgress.length >= 2) drawLine(cobbInProgress[0], cobbInProgress[1], '#D85A30', 1);
+      if (cobbInProgress.length >= 4) drawLine(cobbInProgress[2], cobbInProgress[3], '#378ADD', 1);
+    }
+  }
+}
+
+function drawLine(a, b, col, alpha) {
+  ctx.globalAlpha = alpha;
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawSimpleLines(pts, col, alpha) {
+  pts.forEach((pt) => {
+    ctx.globalAlpha = alpha;
+    ctx.beginPath(); ctx.arc(pt.x,pt.y,5,0,Math.PI*2); ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+  if (pts.length >= 2) drawLine(pts[0], pts[1], col, alpha);
+  if (pts.length >= 4) drawLine(pts[2], pts[3], col, alpha);
+}
+
+function drawDefLines(def, pts, forcedCol, alpha, live) {
+  const colA = forcedCol || '#D85A30';
+  const colB = forcedCol || '#378ADD';
+  if (!live) {
+    pts.forEach(pt => {
+      ctx.globalAlpha = alpha;
+      ctx.beginPath(); ctx.arc(pt.x,pt.y,4,0,Math.PI*2); ctx.fillStyle = forcedCol || '#999'; ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+  }
+  if (def.construction === 'two_lines') {
+    if (pts.length >= 2) drawLine(pts[0], pts[1], colA, alpha);
+    if (pts.length >= 4) drawLine(pts[2], pts[3], colB, alpha);
+  } else if (def.construction === 'vertex') {
+    if (pts.length >= 2) drawLine(pts[1], pts[0], colA, alpha);
+    if (pts.length >= 3) drawLine(pts[1], pts[2], colB, alpha);
+  } else if (def.construction === 'perp_bisector') {
+    if (pts.length >= 2) drawLine(pts[0], pts[1], colA, alpha);
+    if (pts.length >= 4) drawLine(pts[2], pts[3], colB, 0.5*alpha);
+    if (pts.length >= 6) {
+      drawLine(pts[4], pts[5], colB, 0.5*alpha);
+      const medMid = {x:(pts[2].x+pts[3].x)/2, y:(pts[2].y+pts[3].y)/2};
+      const latMid = {x:(pts[4].x+pts[5].x)/2, y:(pts[4].y+pts[5].y)/2};
+      drawLine(medMid, latMid, colB, alpha);
+      const cx=(medMid.x+latMid.x)/2, cy=(medMid.y+latMid.y)/2, dx=latMid.x-medMid.x, dy=latMid.y-medMid.y;
+      const len=Math.hypot(dx,dy)||1, px=-dy/len, py=dx/len, half=len*0.8;
+      drawLine({x:cx-px*half,y:cy-py*half}, {x:cx+px*half,y:cy+py*half}, '#639922', alpha);
+    }
+  } else if (def.construction === 'vs_horizontal') {
+    if (pts.length >= 2) {
+      drawLine(pts[0], pts[1], colA, alpha);
+      drawLine(pts[0], {x: pts[0].x + 60, y: pts[0].y}, '#999', alpha*0.6);
+    }
+  }
+}
+
+function classifyCobb(a){ if(a<10) return 'Normal / Sin Escoliosis'; if(a<=24) return 'Leve'; if(a<=44) return 'Moderada'; return 'Severa'; }
+
+btnNewCurve.addEventListener('click', () => {
+  if (cobbInProgress.length < 4) { status.textContent = 'Marca los 4 puntos de la curva antes de agregarla.'; return; }
+  const v1 = {x: cobbInProgress[1].x - cobbInProgress[0].x, y: cobbInProgress[1].y - cobbInProgress[0].y};
+  const v2 = {x: cobbInProgress[3].x - cobbInProgress[2].x, y: cobbInProgress[3].y - cobbInProgress[2].y};
+  const rounded = Math.round(angleBetweenVectors(v1, v2, true) * 10) / 10;
+  const severity = classifyCobb(rounded);
+  cobbCurves.push({ points: cobbInProgress.map(p => ({...p})), curveType: curveTypeSel.value,
+    evsLabel: evsLabelInput.value || null, eviLabel: eviLabelInput.value || null, angle: rounded, severity });
+  cobbInProgress = [];
+  evsLabelInput.value = ''; eviLabelInput.value = '';
+  status.textContent = 'Curva agregada. Marca otra o revisa el resultado.';
+  draw(); renderResults();
+});
+
+function renderResults() {
+  const p = currentPath();
+  if (p.isCobb) {
+    if (cobbCurves.length === 0) { resultCard.style.display = 'none'; return; }
+    resultSummary.innerHTML = cobbCurves.map(c => `
+      <div style="display:flex; justify-content:space-between; gap:12px;">
+        <span>${c.curveType}${c.evsLabel||c.eviLabel ? ' ('+(c.evsLabel||'?')+'-'+(c.eviLabel||'?')+')' : ''}</span>
+        <span style="font-weight:500;">${c.angle.toFixed(1)}° — ${c.severity}</span>
+      </div>`).join('');
+    resultCard.style.display = 'block';
+    resultJson.textContent = JSON.stringify({
+      success: true, pathology: 'Escoliosis',
+      detected_curves: cobbCurves.map(c => ({
+        curve_type: c.curveType, evs_label: c.evsLabel, evi_label: c.eviLabel,
+        landmarks: {
+          evs_endplate: [[Math.round(c.points[0].x/scale),Math.round(c.points[0].y/scale)],[Math.round(c.points[1].x/scale),Math.round(c.points[1].y/scale)]],
+          evi_endplate: [[Math.round(c.points[2].x/scale),Math.round(c.points[2].y/scale)],[Math.round(c.points[3].x/scale),Math.round(c.points[3].y/scale)]]
+        },
+        cobb_angle_degrees: c.angle, severity: c.severity
+      })), confidence_score: null, error_message: null
+    }, null, 2);
+    return;
+  }
+
+  const m = measurements[p.id];
+  if (!m || Object.keys(m).length === 0) { resultCard.style.display = 'none'; return; }
+  resultSummary.innerHTML = Object.keys(m).map(angleId => {
+    const def = p.angles.find(a => a.id === angleId);
+    const r = m[angleId];
+    return `<div style="display:flex; justify-content:space-between; gap:12px;">
+      <span>${def.name}</span><span style="font-weight:500;">${r.angleDeg.toFixed(1)}° — ${r.severity}</span></div>`;
+  }).join('');
+  resultCard.style.display = 'block';
+  resultJson.textContent = JSON.stringify({
+    success: true, pathology: p.name,
+    angles: Object.keys(m).map(angleId => {
+      const def = p.angles.find(a => a.id === angleId);
+      const r = m[angleId];
+      return { angle_id: angleId, angle_name: def.name,
+        landmarks: r.points.map(pt => [Math.round(pt.x/scale), Math.round(pt.y/scale)]),
+        angle_degrees: r.angleDeg, severity: r.severity };
+    }), confidence_score: null, error_message: null
+  }, null, 2);
+}
+
+refreshAll();
+</script>
+</body>
+</html>
