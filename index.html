@@ -3,63 +3,80 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Visor de Ángulos Radiológicos — Pie y Columna</title>
+<title>Visor de Ángulos Radiológicos — Pie, Tobillo y Columna</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   :root {
-    --surface-1: #f7f7f5;
-    --surface-2: #eeeeec;
-    --border: #d9d9d6;
-    --text-primary: #1a1a19;
-    --text-secondary: #6b6b68;
-    --accent: #378ADD;
-    --radius: 10px;
+    --surface-1: #f7f7f5; --surface-2: #eeeeec; --border: #d9d9d6;
+    --text-primary: #1a1a19; --text-secondary: #6b6b68; --accent: #378ADD; --radius: 10px;
     --font-mono: 'SFMono-Regular', Consolas, monospace;
   }
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #fff;
-    color: var(--text-primary);
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 20px;
+    background: #fff; color: var(--text-primary); max-width: 900px; margin: 0 auto; padding: 16px;
   }
   h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
-  p.subtitle { color: var(--text-secondary); font-size: 13px; margin-top: 0; margin-bottom: 20px; }
+  p.subtitle { color: var(--text-secondary); font-size: 13px; margin-top: 0; margin-bottom: 16px; }
   button {
     border: none; border-radius: 8px; background: var(--accent); color: #fff;
-    height: 34px; font-size: 13px; cursor: pointer; font-weight: 500;
+    height: 34px; font-size: 13px; cursor: pointer; font-weight: 500; padding: 0 12px;
   }
+  button.secondary { background: var(--surface-2); color: var(--text-primary); }
   button:hover { opacity: 0.9; }
-  input, select {
-    border: 1px solid var(--border); border-radius: 8px; height: 34px; padding: 0 10px; font-size: 13px;
+  input, select, textarea {
+    border: 1px solid var(--border); border-radius: 8px; height: 34px; padding: 0 10px; font-size: 13px; font-family: inherit;
   }
+  textarea { height: auto; padding: 8px 10px; line-height: 1.5; }
   #app { display:flex; flex-direction:column; gap:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #canvasWrapper { max-height: 65vh; overflow: auto; background: var(--surface-1); border-radius:12px; border:1px solid var(--border); touch-action: none; }
+  canvas { display:block; cursor:crosshair; }
+  @media (max-width: 600px) {
+    button { font-size: 12px; padding: 0 8px; }
+    #canvasWrapper { max-height: 55vh; }
+  }
 </style>
 </head>
 <body>
-<h1>Visor de Ángulos Radiológicos — Pie y Columna</h1>
-<p class="subtitle">Marcado manual de puntos anatómicos, agrupado por patología, con puntos reutilizables entre mediciones. Uso educativo/de apoyo — no reemplaza el juicio clínico.</p>
+<h1>Visor de Ángulos Radiológicos — Pie, Tobillo y Columna</h1>
+<p class="subtitle">Marcado manual de puntos anatómicos, agrupado por patología, con puntos reutilizables entre mediciones. Herramienta de apoyo — no reemplaza el juicio clínico ni realiza detección automática.</p>
 
 <div id="app">
-  <div id="pathTabs" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+  <div class="row">
+    <label style="font-size:13px; color:var(--text-secondary);">Lado:</label>
+    <select id="sideSel">
+      <option value="Derecho">Derecho</option>
+      <option value="Izquierdo">Izquierdo</option>
+    </select>
+    <label style="font-size:13px; color:var(--text-secondary); margin-left:8px;">Paciente/ID (opcional):</label>
+    <input id="patientId" type="text" placeholder="ej. iniciales o ficha" style="width:160px;" />
+  </div>
 
-  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+  <div id="pathTabs" class="row"></div>
+
+  <div class="row">
     <button id="btnLoad">Cargar imagen JPG</button>
     <input type="file" id="fileInput" accept="image/*" style="display:none;" />
-    <button id="btnReset" style="background:var(--surface-2); color:var(--text-primary);">Reiniciar puntos de este ángulo</button>
+    <button id="btnReset" class="secondary">Reiniciar puntos de este ángulo</button>
+    <button id="btnUndo" class="secondary">Deshacer último punto</button>
     <span id="status" style="font-size:13px; color:var(--text-secondary);">Carga una imagen para comenzar</span>
   </div>
 
-  <div id="angleChips" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
-
-  <div style="position:relative; width:100%; background:var(--surface-1); border-radius:12px; border:1px solid var(--border); overflow:hidden;">
-    <canvas id="cv" style="width:100%; display:block; cursor:crosshair;"></canvas>
+  <div class="row">
+    <span style="font-size:12px; color:var(--text-secondary);">Zoom:</span>
+    <button id="btnZoomOut" class="secondary" style="width:34px; padding:0;">−</button>
+    <button id="btnZoomReset" class="secondary" style="width:auto;">100%</button>
+    <button id="btnZoomIn" class="secondary" style="width:34px; padding:0;">+</button>
   </div>
+
+  <div id="angleChips" class="row"></div>
+
+  <div id="canvasWrapper"><canvas id="cv"></canvas></div>
 
   <div id="partsList" style="display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--text-secondary);"></div>
 
-  <div id="cobbLabels" style="display:none; gap:8px; flex-wrap:wrap;">
+  <div id="cobbLabels" class="row" style="display:none;">
     <select id="curveType">
       <option value="Torácica">Torácica</option>
       <option value="Lumbar">Lumbar</option>
@@ -70,19 +87,40 @@
     <button id="btnNewCurve">Agregar curva</button>
   </div>
 
+  <div id="calibBox" class="row" style="display:none; background:var(--surface-1); padding:10px; border-radius:var(--radius); border:1px solid var(--border);">
+    <span style="font-size:13px;">Calibración: marca 2 puntos de distancia conocida e indica el valor real.</span>
+    <input id="calibMm" type="number" placeholder="mm reales" style="width:100px;" />
+    <button id="btnCalibConfirm" class="secondary">Confirmar calibración</button>
+    <span id="calibStatus" style="font-size:12px; color:var(--text-secondary);"></span>
+  </div>
+
   <div id="resultCard" style="display:none; background:var(--surface-1); border-radius:var(--radius); padding:1rem; border:1px solid var(--border);">
     <p style="font-size:13px; color:var(--text-secondary); margin:0 0 8px;">Mediciones de esta patología</p>
-    <div id="resultSummary" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;"></div>
-    <p style="font-size:13px; color:var(--text-secondary); margin:0 0 6px;">Salida JSON</p>
+    <div id="resultSummary" style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px;"></div>
+    <div id="validationNote" style="font-size:12px; color:#b8860b; margin-bottom:8px;"></div>
+    <div class="row" style="margin-bottom:10px;">
+      <button id="btnExportPng" class="secondary">Descargar imagen anotada (PNG)</button>
+      <button id="btnExportPdf" class="secondary">Descargar informe (PDF)</button>
+      <button id="btnNarrative" class="secondary">Generar informe narrativo</button>
+    </div>
+    <textarea id="narrativeText" style="display:none; width:100%;" rows="4" readonly></textarea>
+    <p style="font-size:13px; color:var(--text-secondary); margin:10px 0 6px;">Salida JSON</p>
     <pre id="resultJson" style="font-size:12px; font-family:var(--font-mono); background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); padding:10px; margin:0; overflow-x:auto; white-space:pre-wrap; word-break:break-all;"></pre>
   </div>
 
-  <p style="font-size:11px; color:var(--text-secondary); margin-top:20px;">
-    Herramienta de apoyo para marcado manual de ángulos radiológicos. No realiza detección automática ni diagnóstico. Las mediciones dependen de la ubicación de los puntos marcados por el usuario.
+  <div class="row">
+    <button id="btnSaveSession" class="secondary">Guardar sesión en este dispositivo</button>
+    <button id="btnLoadSession" class="secondary">Cargar última sesión guardada</button>
+    <span id="sessionStatus" style="font-size:12px; color:var(--text-secondary);"></span>
+  </div>
+
+  <p style="font-size:11px; color:var(--text-secondary); margin-top:10px;">
+    Herramienta de apoyo para marcado manual de ángulos y distancias radiológicas. No realiza detección automática ni diagnóstico. Las mediciones dependen de la ubicación de los puntos marcados por el usuario.
   </p>
 </div>
 
 <script>
+// ============ LANDMARKS ============
 const LANDMARKS = {
   axis_1mtt: { label: 'Eje 1er metatarsiano (base → cabeza)', count: 2 },
   axis_2mtt: { label: 'Eje 2º metatarsiano (base → cabeza)', count: 2 },
@@ -96,9 +134,16 @@ const LANDMARKS = {
   point_talonavicular_inferior: { label: 'Punto más inferior articulación astrágalo-escafoidea', count: 1 },
   point_1mtt_head_inferior: { label: 'Punto más inferior cabeza 1er metatarsiano', count: 1 },
   point_sesamoid_inferior: { label: 'Polo inferior sesamoideo interno', count: 1 },
-  calcaneus_inferior_line: { label: 'Borde inferior del calcáneo (posterior → apófisis anterior)', count: 2 }
+  calcaneus_inferior_line: { label: 'Borde inferior del calcáneo (posterior → apófisis anterior)', count: 2 },
+  axis_malleolar: { label: 'Línea bimaleolar (maléolo medial → maléolo lateral)', count: 2 },
+  axis_talar_dome: { label: 'Tangente superior domo astragalino (medial → lateral)', count: 2 },
+  axis_tibial_plafond: { label: 'Tangente superficie articular distal tibia / plafón (medial → lateral)', count: 2 },
+  axis_tibia_diaphysis: { label: 'Eje diafisario de la tibia (proximal → distal)', count: 2 },
+  tangent_post_tibial: { label: 'Tangente borde posterior superficie articular tibial', count: 2 },
+  tangent_ant_tibial: { label: 'Tangente borde anterior superficie articular tibial', count: 2 }
 };
 
+// ============ ÁNGULOS POR PATOLOGÍA ============
 const PATHOLOGIES = [
   { id: 'hallux', name: 'Hallux valgus / Metatarso aducto', projection: 'Dorsoplantar (AP) con carga',
     angles: [
@@ -129,18 +174,44 @@ const PATHOLOGIES = [
         parts: ['calcaneus_inferior_line'], classify: a => a < 20 ? 'Disminuido (pie plano)' : (a <= 25 ? 'Normal' : 'Aumentado (pie cavo)') }
     ]
   },
-  { id: 'escoliosis', name: 'Escoliosis (Ángulo de Cobb)', projection: 'Columna completa AP/PA', isCobb: true }
+  { id: 'tobillo', name: 'Tobillo / Pierna', projection: 'Mortaja, AP y Lateral',
+    angles: [
+      { id: 'talocrural', name: 'Ángulo talocrural', construction: 'two_lines', projTag: 'Mortaja',
+        parts: ['axis_malleolar','axis_talar_dome'],
+        classify: a => a < 8 ? 'Disminuido (sugiere acortamiento de peroné)' : (a <= 15 ? 'Normal' : 'Aumentado') },
+      { id: 'talartilt', name: 'Talar tilt (inclinación astragalina, estrés varo)', construction: 'two_lines', projTag: 'Mortaja/estrés',
+        parts: ['axis_tibial_plafond','axis_talar_dome'],
+        classify: a => a <= 5 ? 'Normal / simétrico' : 'Aumentado — sugiere lesión ligamentosa (comparar con lado sano)' },
+      { id: 'oblictibioastrag', name: 'Ángulo de oblicuidad tibioastragalina', construction: 'two_lines', projTag: 'AP',
+        parts: ['axis_tibia_diaphysis','axis_tibial_plafond'],
+        classify: a => Math.abs(a-93) <= 5 ? 'Normal (~93°)' : 'Fuera de rango habitual' },
+      { id: 'arcotibial', name: 'Arco de curvatura de superficie articular tibial', construction: 'two_lines', projTag: 'Lateral',
+        parts: ['tangent_post_tibial','tangent_ant_tibial'],
+        classify: a => a < 65 ? 'Disminuido' : (a <= 70 ? 'Normal' : 'Aumentado') }
+    ]
+  },
+  { id: 'escoliosis', name: 'Escoliosis (Ángulo de Cobb)', projection: 'Columna completa AP/PA', isCobb: true },
+  { id: 'distancias', name: 'Distancias — Sindesmosis / Mortaja', projection: 'AP y Mortaja', isDistance: true,
+    measures: [
+      { id: 'ecm', name: 'Espacio claro medial (ECM)', classify: mm => mm < 4 ? 'Normal' : 'Aumentado (sugiere lesión sindesmal/deltoidea)' },
+      { id: 'ectf', name: 'Espacio claro tibiofibular (ECTF)', classify: mm => mm < 6 ? 'Normal' : 'Aumentado (sugiere diástasis sindesmal)' },
+      { id: 'overlap', name: 'Solapamiento tibioperoneo (overlap)', classify: mm => mm >= 6 ? 'Normal' : 'Disminuido (sugiere lesión sindesmal)' }
+    ]
+  }
 ];
 
 const palette = ['#D85A30','#378ADD','#639922','#B85CD6','#D6A230','#4FA9A2'];
 
+// ============ ESTADO ============
 const canvas = document.getElementById('cv');
 const ctx = canvas.getContext('2d');
+const canvasWrapper = document.getElementById('canvasWrapper');
 const fileInput = document.getElementById('fileInput');
 const status = document.getElementById('status');
 const resultCard = document.getElementById('resultCard');
 const resultSummary = document.getElementById('resultSummary');
 const resultJson = document.getElementById('resultJson');
+const validationNote = document.getElementById('validationNote');
 const partsListEl = document.getElementById('partsList');
 const angleChipsEl = document.getElementById('angleChips');
 const pathTabsEl = document.getElementById('pathTabs');
@@ -149,31 +220,55 @@ const btnNewCurve = document.getElementById('btnNewCurve');
 const curveTypeSel = document.getElementById('curveType');
 const evsLabelInput = document.getElementById('evsLabel');
 const eviLabelInput = document.getElementById('eviLabel');
+const calibBox = document.getElementById('calibBox');
+const calibMmInput = document.getElementById('calibMm');
+const calibStatus = document.getElementById('calibStatus');
+const sideSel = document.getElementById('sideSel');
+const patientIdInput = document.getElementById('patientId');
+const sessionStatus = document.getElementById('sessionStatus');
+const narrativeText = document.getElementById('narrativeText');
 
-let img = null, scale = 1;
+let img = null, scale = 1, zoom = 1;
 let currentPathIdx = 0;
 let currentAngleId = null;
+let currentDistanceId = null;
 let landmarkStore = {};
 let partsProgress = [];
 let measurements = {};
 let cobbCurves = [];
 let cobbInProgress = [];
+let distanceMeasurements = {}; // measureId -> {mmValue, px, points, severity}
+let distanceInProgress = [];
+let pxPerMm = null;
+let calibrating = false;
+let calibPoints = [];
+let undoStack = []; // {undo: fn}
 
 function currentPath() { return PATHOLOGIES[currentPathIdx]; }
 function currentAngleDef() {
   const p = currentPath();
-  if (p.isCobb) return null;
+  if (p.isCobb || p.isDistance) return null;
   return p.angles.find(a => a.id === currentAngleId);
 }
+function currentDistanceDef() {
+  const p = currentPath();
+  if (!p.isDistance) return null;
+  return p.measures.find(m => m.id === currentDistanceId);
+}
 
+// ============ TABS ============
 function renderPathTabs() {
   pathTabsEl.innerHTML = '';
   PATHOLOGIES.forEach((p, idx) => {
     const btn = document.createElement('button');
     btn.textContent = p.name;
-    btn.style.width = 'auto'; btn.style.padding = '0 14px'; btn.style.fontSize = '13px';
-    if (idx !== currentPathIdx) { btn.style.background = 'var(--surface-2)'; btn.style.color = 'var(--text-primary)'; }
-    btn.addEventListener('click', () => { currentPathIdx = idx; currentAngleId = null; cobbCurves = []; refreshAll(); });
+    btn.className = idx === currentPathIdx ? '' : 'secondary';
+    btn.style.width = 'auto'; btn.style.fontSize = '13px';
+    btn.addEventListener('click', () => {
+      currentPathIdx = idx; currentAngleId = null; currentDistanceId = null;
+      cobbCurves = []; cobbInProgress = []; calibrating = false;
+      refreshAll();
+    });
     pathTabsEl.appendChild(btn);
   });
 }
@@ -181,22 +276,43 @@ function renderPathTabs() {
 function renderAngleChips() {
   const p = currentPath();
   angleChipsEl.innerHTML = '';
-  if (p.isCobb) { angleChipsEl.style.display = 'none'; cobbLabels.style.display = 'flex'; return; }
   cobbLabels.style.display = 'none';
+  calibBox.style.display = 'none';
+  if (p.isCobb) { angleChipsEl.style.display = 'none'; cobbLabels.style.display = 'flex'; return; }
+  if (p.isDistance) {
+    angleChipsEl.style.display = 'flex';
+    calibBox.style.display = 'flex';
+    p.measures.forEach(m => {
+      const chip = document.createElement('button');
+      const done = distanceMeasurements[m.id];
+      chip.textContent = (done ? '✓ ' : '') + m.name;
+      chip.className = (m.id === currentDistanceId) ? '' : 'secondary';
+      chip.style.width = 'auto'; chip.style.fontSize = '12px';
+      chip.addEventListener('click', () => selectDistance(m.id));
+      angleChipsEl.appendChild(chip);
+    });
+    const calibChip = document.createElement('button');
+    calibChip.textContent = pxPerMm ? '♻️ Escala calibrada' : 'Calibrar escala';
+    calibChip.className = 'secondary';
+    calibChip.style.width = 'auto'; calibChip.style.fontSize = '12px';
+    calibChip.addEventListener('click', startCalibration);
+    angleChipsEl.appendChild(calibChip);
+    return;
+  }
   angleChipsEl.style.display = 'flex';
   p.angles.forEach(a => {
     const chip = document.createElement('button');
     const done = measurements[p.id] && measurements[p.id][a.id];
     chip.textContent = (done ? '✓ ' : '') + a.name + (a.projTag ? ' ['+a.projTag+']' : '');
-    chip.style.width = 'auto'; chip.style.padding = '0 10px'; chip.style.fontSize = '12px';
-    if (a.id !== currentAngleId) { chip.style.background = 'var(--surface-2)'; chip.style.color = 'var(--text-primary)'; }
-    chip.addEventListener('click', () => { selectAngle(a.id); });
+    chip.className = (a.id === currentAngleId) ? '' : 'secondary';
+    chip.style.width = 'auto'; chip.style.fontSize = '12px';
+    chip.addEventListener('click', () => selectAngle(a.id));
     angleChipsEl.appendChild(chip);
   });
 }
 
 function selectAngle(angleId) {
-  currentAngleId = angleId;
+  currentAngleId = angleId; currentDistanceId = null; calibrating = false;
   const def = currentAngleDef();
   partsProgress = def.parts.map(landmarkId => {
     const stored = landmarkStore[landmarkId];
@@ -205,6 +321,18 @@ function selectAngle(angleId) {
     return { landmarkId, points: [], fromStore: false };
   });
   refreshCanvasAndHelp();
+}
+
+function selectDistance(measureId) {
+  currentDistanceId = measureId; currentAngleId = null; calibrating = false;
+  distanceInProgress = [];
+  refreshCanvasAndHelp();
+}
+
+function startCalibration() {
+  calibrating = true; currentAngleId = null; currentDistanceId = null; calibPoints = [];
+  status.textContent = img ? 'Marca 2 puntos de distancia conocida (ej. una esfera/regla en la imagen)' : 'Carga una imagen para comenzar';
+  draw();
 }
 
 function refreshAll() { renderPathTabs(); renderAngleChips(); refreshCanvasAndHelp(); renderResults(); }
@@ -216,19 +344,18 @@ function firstIncompletePartIndex() {
 function renderPartsList() {
   const p = currentPath();
   partsListEl.innerHTML = '';
-  if (p.isCobb || !currentAngleId) return;
+  if (p.isCobb || p.isDistance || !currentAngleId) return;
   partsProgress.forEach((pp, i) => {
     const lm = LANDMARKS[pp.landmarkId];
     const complete = pp.points.length === lm.count;
     const row = document.createElement('div');
-    row.style.display = 'flex'; row.style.gap = '8px'; row.style.alignItems = 'center';
+    row.className = 'row';
     const tag = complete ? (pp.fromStore ? '♻️ reutilizado' : '✓ marcado') : '○ pendiente';
     row.innerHTML = `<span>${tag} — <b style="color:var(--text-primary); font-weight:500;">${lm.label}</b></span>`;
     if (complete) {
       const btn = document.createElement('button');
-      btn.textContent = 'Volver a marcar';
-      btn.style.width = 'auto'; btn.style.padding = '0 8px'; btn.style.fontSize = '11px';
-      btn.style.background = 'var(--surface-2)'; btn.style.color = 'var(--text-secondary)';
+      btn.textContent = 'Volver a marcar'; btn.className = 'secondary';
+      btn.style.width = 'auto'; btn.style.fontSize = '11px'; btn.style.height = '26px';
       btn.addEventListener('click', () => {
         partsProgress[i] = { landmarkId: pp.landmarkId, points: [], fromStore: false };
         status.textContent = `Vuelve a marcar: ${lm.label}`;
@@ -244,13 +371,16 @@ function refreshCanvasAndHelp() {
   const p = currentPath();
   if (p.isCobb) {
     status.textContent = img ? 'Marca el punto 1 (platillo superior EVS)' : 'Carga una imagen para comenzar';
+  } else if (p.isDistance) {
+    if (calibrating) status.textContent = 'Marca 2 puntos de distancia conocida';
+    else if (!currentDistanceId) status.textContent = img ? 'Selecciona una distancia a medir o calibra la escala' : 'Carga una imagen para comenzar';
+    else status.textContent = img ? `Marca punto ${distanceInProgress.length+1}/2 de: ${currentDistanceDef().name}` : 'Carga una imagen para comenzar';
   } else if (!currentAngleId) {
     status.textContent = img ? 'Selecciona un ángulo de la lista de arriba' : 'Carga una imagen para comenzar';
   } else {
     const idx = firstIncompletePartIndex();
-    if (idx === -1) {
-      status.textContent = 'Todos los puntos listos (algunos reutilizados). Ángulo calculado abajo.';
-    } else {
+    if (idx === -1) status.textContent = 'Todos los puntos listos (algunos reutilizados). Ángulo calculado abajo.';
+    else {
       const lm = LANDMARKS[partsProgress[idx].landmarkId];
       const n = partsProgress[idx].points.length;
       status.textContent = img ? `Marca punto ${n+1}/${lm.count} de: ${lm.label}` : 'Carga una imagen para comenzar';
@@ -258,56 +388,113 @@ function refreshCanvasAndHelp() {
   }
   renderPartsList();
   draw();
-  if (!p.isCobb && currentAngleId && firstIncompletePartIndex() === -1) computeAndStore();
+  if (!p.isCobb && !p.isDistance && currentAngleId && firstIncompletePartIndex() === -1) computeAndStore();
 }
 
+// ============ ZOOM ============
+document.getElementById('btnZoomIn').addEventListener('click', () => { zoom = Math.min(3, zoom + 0.25); applyZoom(); });
+document.getElementById('btnZoomOut').addEventListener('click', () => { zoom = Math.max(0.5, zoom - 0.25); applyZoom(); });
+document.getElementById('btnZoomReset').addEventListener('click', () => { zoom = 1; applyZoom(); });
+function applyZoom() {
+  if (!img) return;
+  canvas.style.width = (canvas.width * zoom) + 'px';
+  canvas.style.height = (canvas.height * zoom) + 'px';
+  document.getElementById('btnZoomReset').textContent = Math.round(zoom*100) + '%';
+}
+
+// ============ CARGA DE IMAGEN ============
 document.getElementById('btnLoad').addEventListener('click', () => fileInput.click());
-document.getElementById('btnReset').addEventListener('click', () => { if (currentAngleId) selectAngle(currentAngleId); });
+document.getElementById('btnReset').addEventListener('click', () => {
+  if (currentAngleId) selectAngle(currentAngleId);
+  else if (currentDistanceId) { distanceInProgress = []; refreshCanvasAndHelp(); }
+});
+document.getElementById('btnUndo').addEventListener('click', () => {
+  const action = undoStack.pop();
+  if (action) { action.undo(); draw(); renderPartsList(); status.textContent = 'Último punto deshecho.'; }
+  else status.textContent = 'No hay puntos para deshacer.';
+});
+
+function loadImageFromDataUrl(dataUrl, cb) {
+  const im = new Image();
+  im.onload = () => {
+    img = im;
+    const maxW = 640;
+    scale = Math.min(1, maxW / img.width);
+    canvas.width = img.width * scale;
+    canvas.height = img.height * scale;
+    zoom = 1; applyZoom();
+    if (cb) cb();
+  };
+  im.src = dataUrl;
+}
 
 fileInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = (ev) => {
-    const im = new Image();
-    im.onload = () => {
-      img = im;
-      const maxW = 640;
-      scale = Math.min(1, maxW / img.width);
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      landmarkStore = {}; measurements = {}; cobbCurves = []; currentAngleId = null; partsProgress = [];
+    loadImageFromDataUrl(ev.target.result, () => {
+      landmarkStore = {}; measurements = {}; cobbCurves = []; cobbInProgress = [];
+      distanceMeasurements = {}; distanceInProgress = []; pxPerMm = null;
+      currentAngleId = null; currentDistanceId = null; partsProgress = []; undoStack = [];
       resultCard.style.display = 'none';
       refreshAll();
-    };
-    im.src = ev.target.result;
+    });
   };
   reader.readAsDataURL(file);
 });
 
-canvas.addEventListener('click', (e) => {
-  if (!img) return;
-  const p = currentPath();
+// ============ MARCADO DE PUNTOS (mouse + touch) ============
+function getCanvasPoint(e) {
   const rect = canvas.getBoundingClientRect();
-  const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-  const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return {
+    x: (clientX - rect.left) * (canvas.width / rect.width),
+    y: (clientY - rect.top) * (canvas.height / rect.height)
+  };
+}
+
+function handlePointerDown(e) {
+  if (!img) return;
+  e.preventDefault();
+  const { x, y } = getCanvasPoint(e);
+  const p = currentPath();
+
+  if (calibrating) {
+    calibPoints.push({x,y});
+    draw();
+    if (calibPoints.length === 2) { calibrating = false; calibStatus.textContent = 'Ingresa el valor real en mm y confirma.'; }
+    return;
+  }
+
+  if (p.isDistance) {
+    if (!currentDistanceId || distanceInProgress.length >= 2) return;
+    distanceInProgress.push({x,y});
+    undoStack.push({ undo: () => distanceInProgress.pop() });
+    draw();
+    if (distanceInProgress.length === 2) computeDistance();
+    else status.textContent = `Marca punto 2/2 de: ${currentDistanceDef().name}`;
+    return;
+  }
 
   if (p.isCobb) {
-    cobbInProgress.push({x, y});
+    cobbInProgress.push({x,y});
+    undoStack.push({ undo: () => cobbInProgress.pop() });
     draw();
     if (cobbInProgress.length < 4) {
       const labels = ['platillo superior EVS, extremo 1','platillo superior EVS, extremo 2','platillo inferior EVI, extremo 1','platillo inferior EVI, extremo 2'];
       status.textContent = `Marca el punto ${cobbInProgress.length+1} (${labels[cobbInProgress.length]})`;
-    } else {
-      status.textContent = 'Puntos listos. Completa las etiquetas y presiona "Agregar curva".';
-    }
+    } else status.textContent = 'Puntos listos. Completa las etiquetas y presiona "Agregar curva".';
     return;
   }
 
   if (!currentAngleId) return;
   const idx = firstIncompletePartIndex();
   if (idx === -1) return;
-  partsProgress[idx].points.push({x, y});
+  partsProgress[idx].points.push({x,y});
+  const capturedIdx = idx;
+  undoStack.push({ undo: () => partsProgress[capturedIdx].points.pop() });
   draw();
 
   const lm = LANDMARKS[partsProgress[idx].landmarkId];
@@ -317,16 +504,25 @@ canvas.addEventListener('click', (e) => {
   } else {
     renderPartsList();
     const nextIdx = firstIncompletePartIndex();
-    if (nextIdx === -1) {
-      computeAndStore();
-      status.textContent = 'Medición completa. Puntos reutilizables quedan guardados para otros ángulos.';
-    } else {
-      const nlm = LANDMARKS[partsProgress[nextIdx].landmarkId];
-      status.textContent = `Marca punto 1/${nlm.count} de: ${nlm.label}`;
-    }
+    if (nextIdx === -1) { computeAndStore(); status.textContent = 'Medición completa. Puntos reutilizables quedan guardados para otros ángulos.'; }
+    else { const nlm = LANDMARKS[partsProgress[nextIdx].landmarkId]; status.textContent = `Marca punto 1/${nlm.count} de: ${nlm.label}`; }
   }
+}
+canvas.addEventListener('mousedown', handlePointerDown);
+canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
+
+// ============ CALIBRACIÓN ============
+document.getElementById('btnCalibConfirm').addEventListener('click', () => {
+  const mm = parseFloat(calibMmInput.value);
+  if (calibPoints.length !== 2 || !mm || mm <= 0) { calibStatus.textContent = 'Marca 2 puntos y un valor mm válido.'; return; }
+  const pxDist = Math.hypot(calibPoints[1].x - calibPoints[0].x, calibPoints[1].y - calibPoints[0].y);
+  pxPerMm = pxDist / mm;
+  calibStatus.textContent = `Escala calibrada: ${pxPerMm.toFixed(2)} px/mm.`;
+  renderAngleChips();
+  draw();
 });
 
+// ============ GEOMETRÍA ============
 function angleBetweenVectors(v1, v2, minSupplement) {
   const dot = v1.x*v2.x + v1.y*v2.y;
   const mag1 = Math.hypot(v1.x, v1.y), mag2 = Math.hypot(v2.x, v2.y);
@@ -334,7 +530,6 @@ function angleBetweenVectors(v1, v2, minSupplement) {
   let deg = rad * 180 / Math.PI;
   return minSupplement ? Math.min(deg, 180 - deg) : deg;
 }
-
 function flattenPoints() { return partsProgress.reduce((acc, pp) => acc.concat(pp.points), []); }
 
 function computeAngleForDef(def, pts) {
@@ -373,18 +568,27 @@ function computeAndStore() {
   if (!measurements[p.id]) measurements[p.id] = {};
   measurements[p.id][def.id] = { angleDeg: rounded, severity, points: pts.map(pt => ({...pt})) };
   partsProgress.forEach(pp => { landmarkStore[pp.landmarkId] = pp.points.map(pt => ({...pt})); });
-  renderAngleChips();
-  renderResults();
-  draw();
+  renderAngleChips(); renderResults(); draw();
 }
 
+function computeDistance() {
+  const def = currentDistanceDef();
+  const pxDist = Math.hypot(distanceInProgress[1].x - distanceInProgress[0].x, distanceInProgress[1].y - distanceInProgress[0].y);
+  const mm = pxPerMm ? pxDist / pxPerMm : null;
+  const severity = mm !== null ? def.classify(mm) : 'Sin calibrar (solo valor en píxeles)';
+  distanceMeasurements[def.id] = { mm: mm !== null ? Math.round(mm*10)/10 : null, px: Math.round(pxDist*10)/10, points: distanceInProgress.map(p=>({...p})), severity };
+  renderAngleChips(); renderResults(); draw();
+  status.textContent = mm !== null ? 'Distancia calculada.' : 'Distancia en píxeles calculada — calibra la escala para obtener mm.';
+}
+
+// ============ DIBUJO ============
 function draw() {
   if (!img) return;
   ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const p = currentPath();
 
-  if (!p.isCobb) {
+  if (!p.isCobb && !p.isDistance) {
     if (measurements[p.id]) {
       Object.keys(measurements[p.id]).forEach((angleId, i) => {
         if (angleId === currentAngleId) return;
@@ -396,24 +600,44 @@ function draw() {
       const def = currentAngleDef();
       const pts = flattenPoints();
       pts.forEach((pt,i) => {
-        ctx.beginPath(); ctx.arc(pt.x, pt.y, 5, 0, Math.PI*2);
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2);
         ctx.fillStyle = i % 2 === 0 ? '#D85A30' : '#378ADD';
         ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
         ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText(String(i+1), pt.x+8, pt.y-8);
       });
       drawDefLines(def, pts, null, 1, true);
     }
-  } else {
+  } else if (p.isCobb) {
     cobbCurves.forEach((c, idx) => drawSimpleLines(c.points, palette[idx % palette.length], 1));
     if (cobbInProgress.length > 0) {
       cobbInProgress.forEach((pt,i) => {
-        ctx.beginPath(); ctx.arc(pt.x, pt.y, 5, 0, Math.PI*2);
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2);
         ctx.fillStyle = i % 2 === 0 ? '#D85A30' : '#378ADD';
         ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
         ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText(String(i+1), pt.x+8, pt.y-8);
       });
       if (cobbInProgress.length >= 2) drawLine(cobbInProgress[0], cobbInProgress[1], '#D85A30', 1);
       if (cobbInProgress.length >= 4) drawLine(cobbInProgress[2], cobbInProgress[3], '#378ADD', 1);
+    }
+  } else if (p.isDistance) {
+    Object.keys(distanceMeasurements).forEach((mid, i) => {
+      const dm = distanceMeasurements[mid];
+      drawSimpleLines(dm.points, palette[i % palette.length], 0.5);
+    });
+    if (distanceInProgress.length > 0) {
+      distanceInProgress.forEach((pt,i) => {
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2);
+        ctx.fillStyle = '#D85A30'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText(String(i+1), pt.x+8, pt.y-8);
+      });
+      if (distanceInProgress.length === 2) drawLine(distanceInProgress[0], distanceInProgress[1], '#D85A30', 1);
+    }
+    if (calibPoints.length > 0) {
+      calibPoints.forEach((pt) => {
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2);
+        ctx.fillStyle = '#E8B930'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+      });
+      if (calibPoints.length === 2) drawLine(calibPoints[0], calibPoints[1], '#E8B930', 1);
     }
   }
 }
@@ -424,7 +648,6 @@ function drawLine(a, b, col, alpha) {
   ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
   ctx.globalAlpha = 1;
 }
-
 function drawSimpleLines(pts, col, alpha) {
   pts.forEach((pt) => {
     ctx.globalAlpha = alpha;
@@ -435,7 +658,6 @@ function drawSimpleLines(pts, col, alpha) {
   if (pts.length >= 2) drawLine(pts[0], pts[1], col, alpha);
   if (pts.length >= 4) drawLine(pts[2], pts[3], col, alpha);
 }
-
 function drawDefLines(def, pts, forcedCol, alpha, live) {
   const colA = forcedCol || '#D85A30';
   const colB = forcedCol || '#378ADD';
@@ -472,8 +694,8 @@ function drawDefLines(def, pts, forcedCol, alpha, live) {
   }
 }
 
+// ============ COBB ============
 function classifyCobb(a){ if(a<10) return 'Normal / Sin Escoliosis'; if(a<=24) return 'Leve'; if(a<=44) return 'Moderada'; return 'Severa'; }
-
 btnNewCurve.addEventListener('click', () => {
   if (cobbInProgress.length < 4) { status.textContent = 'Marca los 4 puntos de la curva antes de agregarla.'; return; }
   const v1 = {x: cobbInProgress[1].x - cobbInProgress[0].x, y: cobbInProgress[1].y - cobbInProgress[0].y};
@@ -488,18 +710,34 @@ btnNewCurve.addEventListener('click', () => {
   draw(); renderResults();
 });
 
+// ============ VALIDACIÓN CRUZADA SIMPLE ============
+function getValidationNote(p) {
+  if (p.id === 'pieplanocavo') {
+    const m = measurements[p.id];
+    if (m && m['costabartani'] && m['djian']) {
+      if (m['costabartani'].severity !== m['djian'].severity) {
+        return '⚠️ Costa-Bártani y Djian-Annonier entregan clasificaciones distintas — revisa la ubicación de los puntos compartidos (calcáneo / astrágalo-escafoidea) antes de interpretar.';
+      }
+    }
+  }
+  return '';
+}
+
+// ============ RESULTADOS ============
 function renderResults() {
   const p = currentPath();
+  narrativeText.style.display = 'none';
+  validationNote.textContent = '';
+
   if (p.isCobb) {
     if (cobbCurves.length === 0) { resultCard.style.display = 'none'; return; }
     resultSummary.innerHTML = cobbCurves.map(c => `
-      <div style="display:flex; justify-content:space-between; gap:12px;">
+      <div class="row" style="justify-content:space-between;">
         <span>${c.curveType}${c.evsLabel||c.eviLabel ? ' ('+(c.evsLabel||'?')+'-'+(c.eviLabel||'?')+')' : ''}</span>
-        <span style="font-weight:500;">${c.angle.toFixed(1)}° — ${c.severity}</span>
-      </div>`).join('');
+        <span style="font-weight:500;">${c.angle.toFixed(1)}° — ${c.severity}</span></div>`).join('');
     resultCard.style.display = 'block';
     resultJson.textContent = JSON.stringify({
-      success: true, pathology: 'Escoliosis',
+      success: true, pathology: 'Escoliosis', side: sideSel.value, patient_id: patientIdInput.value || null,
       detected_curves: cobbCurves.map(c => ({
         curve_type: c.curveType, evs_label: c.evsLabel, evi_label: c.eviLabel,
         landmarks: {
@@ -512,17 +750,39 @@ function renderResults() {
     return;
   }
 
+  if (p.isDistance) {
+    const ids = Object.keys(distanceMeasurements);
+    if (ids.length === 0) { resultCard.style.display = 'none'; return; }
+    resultSummary.innerHTML = ids.map(mid => {
+      const def = p.measures.find(m => m.id === mid);
+      const r = distanceMeasurements[mid];
+      const val = r.mm !== null ? `${r.mm.toFixed(1)} mm` : `${r.px.toFixed(1)} px (sin calibrar)`;
+      return `<div class="row" style="justify-content:space-between;"><span>${def.name}</span><span style="font-weight:500;">${val} — ${r.severity}</span></div>`;
+    }).join('');
+    resultCard.style.display = 'block';
+    resultJson.textContent = JSON.stringify({
+      success: true, pathology: p.name, side: sideSel.value, patient_id: patientIdInput.value || null,
+      scale_px_per_mm: pxPerMm ? Math.round(pxPerMm*100)/100 : null,
+      measurements: ids.map(mid => {
+        const def = p.measures.find(m => m.id === mid);
+        const r = distanceMeasurements[mid];
+        return { measure_id: mid, measure_name: def.name, value_mm: r.mm, value_px: r.px, severity: r.severity };
+      }), error_message: null
+    }, null, 2);
+    return;
+  }
+
   const m = measurements[p.id];
   if (!m || Object.keys(m).length === 0) { resultCard.style.display = 'none'; return; }
   resultSummary.innerHTML = Object.keys(m).map(angleId => {
     const def = p.angles.find(a => a.id === angleId);
     const r = m[angleId];
-    return `<div style="display:flex; justify-content:space-between; gap:12px;">
-      <span>${def.name}</span><span style="font-weight:500;">${r.angleDeg.toFixed(1)}° — ${r.severity}</span></div>`;
+    return `<div class="row" style="justify-content:space-between;"><span>${def.name}</span><span style="font-weight:500;">${r.angleDeg.toFixed(1)}° — ${r.severity}</span></div>`;
   }).join('');
   resultCard.style.display = 'block';
+  validationNote.textContent = getValidationNote(p);
   resultJson.textContent = JSON.stringify({
-    success: true, pathology: p.name,
+    success: true, pathology: p.name, side: sideSel.value, patient_id: patientIdInput.value || null,
     angles: Object.keys(m).map(angleId => {
       const def = p.angles.find(a => a.id === angleId);
       const r = m[angleId];
@@ -532,6 +792,117 @@ function renderResults() {
     }), confidence_score: null, error_message: null
   }, null, 2);
 }
+
+// ============ INFORME NARRATIVO ============
+document.getElementById('btnNarrative').addEventListener('click', () => {
+  const p = currentPath();
+  let lines = [];
+  const sideTxt = sideSel.value.toLowerCase();
+  if (p.isCobb && cobbCurves.length) {
+    lines.push(`Estudio de columna: se identifican ${cobbCurves.length} curva(s) escoliótica(s).`);
+    cobbCurves.forEach(c => lines.push(`Curva ${c.curveType.toLowerCase()}${c.evsLabel||c.eviLabel?` (${c.evsLabel||'?'}-${c.eviLabel||'?'})`:''}: ángulo de Cobb ${c.angle.toFixed(1)}°, escoliosis ${c.severity.toLowerCase()}.`));
+  } else if (p.isDistance && Object.keys(distanceMeasurements).length) {
+    lines.push(`Evaluación de mortaja/sindesmosis, pie ${sideTxt}.`);
+    Object.keys(distanceMeasurements).forEach(mid => {
+      const def = p.measures.find(m => m.id === mid); const r = distanceMeasurements[mid];
+      const val = r.mm !== null ? `${r.mm.toFixed(1)} mm` : `${r.px.toFixed(1)} px (sin calibrar)`;
+      lines.push(`${def.name}: ${val} (${r.severity}).`);
+    });
+  } else if (measurements[p.id] && Object.keys(measurements[p.id]).length) {
+    lines.push(`Estudio radiológico de ${p.name.toLowerCase()}, pie ${sideTxt}.`);
+    Object.keys(measurements[p.id]).forEach(angleId => {
+      const def = p.angles.find(a => a.id === angleId); const r = measurements[p.id][angleId];
+      lines.push(`${def.name}: ${r.angleDeg.toFixed(1)}° (${r.severity}).`);
+    });
+    const note = getValidationNote(p);
+    if (note) lines.push(note.replace('⚠️ ',''));
+  } else {
+    lines.push('No hay mediciones registradas en esta patología.');
+  }
+  narrativeText.value = lines.join(' ');
+  narrativeText.style.display = 'block';
+});
+
+// ============ EXPORTAR PNG ============
+document.getElementById('btnExportPng').addEventListener('click', () => {
+  if (!img) return;
+  const link = document.createElement('a');
+  link.download = 'medicion_radiologica.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+});
+
+// ============ EXPORTAR PDF ============
+document.getElementById('btnExportPdf').addEventListener('click', () => {
+  if (!img || !window.jspdf) { alert('No se pudo cargar el generador de PDF. Verifica tu conexión.'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let y = 40;
+  doc.setFontSize(14); doc.text('Informe de medición radiológica', 40, y); y += 20;
+  doc.setFontSize(10);
+  doc.text(`Patología: ${currentPath().name}  |  Lado: ${sideSel.value}  |  ID: ${patientIdInput.value || '—'}`, 40, y); y += 14;
+  doc.text(`Fecha: ${new Date().toLocaleString()}`, 40, y); y += 20;
+
+  const imgData = canvas.toDataURL('image/png');
+  const imgWidth = pageWidth - 80;
+  const imgHeight = imgWidth * (canvas.height / canvas.width);
+  doc.addImage(imgData, 'PNG', 40, y, imgWidth, imgHeight);
+  y += imgHeight + 20;
+
+  doc.setFontSize(11); doc.text('Resultados:', 40, y); y += 16;
+  doc.setFontSize(10);
+  const p = currentPath();
+  let entries = [];
+  if (p.isCobb) entries = cobbCurves.map(c => `${c.curveType}: ${c.angle.toFixed(1)}° — ${c.severity}`);
+  else if (p.isDistance) entries = Object.keys(distanceMeasurements).map(mid => {
+    const def = p.measures.find(m => m.id === mid); const r = distanceMeasurements[mid];
+    return `${def.name}: ${r.mm !== null ? r.mm.toFixed(1)+' mm' : r.px.toFixed(1)+' px'} — ${r.severity}`;
+  });
+  else if (measurements[p.id]) entries = Object.keys(measurements[p.id]).map(aid => {
+    const def = p.angles.find(a => a.id === aid); const r = measurements[p.id][aid];
+    return `${def.name}: ${r.angleDeg.toFixed(1)}° — ${r.severity}`;
+  });
+  entries.forEach(line => { doc.text(line, 40, y); y += 14; });
+
+  doc.setFontSize(8); doc.setTextColor(120);
+  doc.text('Herramienta de apoyo para marcado manual. No constituye diagnóstico automático.', 40, doc.internal.pageSize.getHeight() - 30);
+
+  doc.save('informe_medicion.pdf');
+});
+
+// ============ PERSISTENCIA (localStorage) ============
+document.getElementById('btnSaveSession').addEventListener('click', () => {
+  if (!img) { sessionStatus.textContent = 'Carga una imagen primero.'; return; }
+  try {
+    const session = {
+      imageDataUrl: canvas.toDataURL('image/jpeg', 0.85),
+      currentPathIdx, landmarkStore, measurements, cobbCurves, distanceMeasurements, pxPerMm,
+      side: sideSel.value, patientId: patientIdInput.value, savedAt: new Date().toISOString()
+    };
+    localStorage.setItem('visor_angulos_session', JSON.stringify(session));
+    sessionStatus.textContent = 'Sesión guardada en este dispositivo.';
+  } catch (err) { sessionStatus.textContent = 'No se pudo guardar (imagen muy grande para el almacenamiento local).'; }
+});
+
+document.getElementById('btnLoadSession').addEventListener('click', () => {
+  const raw = localStorage.getItem('visor_angulos_session');
+  if (!raw) { sessionStatus.textContent = 'No hay sesión guardada.'; return; }
+  const session = JSON.parse(raw);
+  loadImageFromDataUrl(session.imageDataUrl, () => {
+    currentPathIdx = session.currentPathIdx || 0;
+    landmarkStore = session.landmarkStore || {};
+    measurements = session.measurements || {};
+    cobbCurves = session.cobbCurves || [];
+    distanceMeasurements = session.distanceMeasurements || {};
+    pxPerMm = session.pxPerMm || null;
+    sideSel.value = session.side || 'Derecho';
+    patientIdInput.value = session.patientId || '';
+    currentAngleId = null; currentDistanceId = null; partsProgress = [];
+    refreshAll();
+    sessionStatus.textContent = `Sesión cargada (guardada el ${new Date(session.savedAt).toLocaleString()}).`;
+  });
+});
 
 refreshAll();
 </script>
