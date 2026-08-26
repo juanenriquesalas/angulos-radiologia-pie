@@ -11,10 +11,19 @@
     --text-primary: #1a1a19; --text-secondary: #6b6b68; --accent: #378ADD; --radius: 10px;
     --font-mono: 'SFMono-Regular', Consolas, monospace;
   }
+  body[data-theme="dark"] {
+    --surface-1: #1c1c1a; --surface-2: #262624; --border: #3a3a37;
+    --text-primary: #f0f0ee; --text-secondary: #9c9c98;
+  }
+  body[data-theme="dark"] { background: #111110; }
+  body[data-theme="dark"] input, body[data-theme="dark"] select, body[data-theme="dark"] textarea {
+    background: var(--surface-2); color: var(--text-primary);
+  }
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: #fff; color: var(--text-primary); max-width: 900px; margin: 0 auto; padding: 16px;
+    transition: background 0.15s, color 0.15s;
   }
   h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
   p.subtitle { color: var(--text-secondary); font-size: 13px; margin-top: 0; margin-bottom: 16px; }
@@ -51,6 +60,7 @@
     </select>
     <label style="font-size:13px; color:var(--text-secondary); margin-left:8px;">Paciente/ID (opcional):</label>
     <input id="patientId" type="text" placeholder="ej. iniciales o ficha" style="width:160px;" />
+    <button id="btnDarkMode" class="secondary" style="margin-left:auto;">🌙 Modo oscuro</button>
   </div>
 
   <div id="pathTabs" class="row"></div>
@@ -68,6 +78,11 @@
     <button id="btnZoomOut" class="secondary" style="width:34px; padding:0;">−</button>
     <button id="btnZoomReset" class="secondary" style="width:auto;">100%</button>
     <button id="btnZoomIn" class="secondary" style="width:34px; padding:0;">+</button>
+  </div>
+
+  <div class="row">
+    <button id="btnProtocol" class="secondary">▶ Iniciar protocolo de esta patología</button>
+    <span id="protocolStatus" style="font-size:12px; color:var(--text-secondary);"></span>
   </div>
 
   <div id="angleChips" class="row"></div>
@@ -110,7 +125,7 @@
 
   <div class="row">
     <button id="btnSaveSession" class="secondary">Guardar sesión en este dispositivo</button>
-    <button id="btnLoadSession" class="secondary">Cargar última sesión guardada</button>
+    <button id="btnLoadSession" class="secondary">Ver historial de pacientes</button>
     <span id="sessionStatus" style="font-size:12px; color:var(--text-secondary);"></span>
   </div>
 
@@ -140,7 +155,13 @@ const LANDMARKS = {
   axis_tibial_plafond: { label: 'Tangente superficie articular distal tibia / plafón (medial → lateral)', count: 2 },
   axis_tibia_diaphysis: { label: 'Eje diafisario de la tibia (proximal → distal)', count: 2 },
   tangent_post_tibial: { label: 'Tangente borde posterior superficie articular tibial', count: 2 },
-  tangent_ant_tibial: { label: 'Tangente borde anterior superficie articular tibial', count: 2 }
+  tangent_ant_tibial: { label: 'Tangente borde anterior superficie articular tibial', count: 2 },
+  point_calc_anterior_process: { label: 'Punto más alto apófisis anterior del calcáneo', count: 1 },
+  point_calc_posterior_facet_apex: { label: 'Punto más alto carilla articular posterior (vértice ángulo de Böhler)', count: 1 },
+  point_calc_tuberosity: { label: 'Punto más alto tuberosidad posterior del calcáneo', count: 1 },
+  point_calc_gissane_lateral: { label: 'Punto apófisis anterior (rama lateral, ángulo de Gissane)', count: 1 },
+  point_calc_gissane_apex: { label: 'Vértice del ángulo de Gissane (borde carilla posterior)', count: 1 },
+  point_calc_gissane_posterior: { label: 'Punto posterior de la carilla posterior (ángulo de Gissane)', count: 1 }
 };
 
 // ============ ÁNGULOS POR PATOLOGÍA ============
@@ -156,7 +177,8 @@ const PATHOLOGIES = [
       { id: 'metaducto', name: 'Metatarso aducto (eje mediopié)', construction: 'perp_bisector',
         parts: ['axis_2mtt','axis_midfoot_medial','axis_midfoot_lateral'],
         classify: a => a < 15 ? 'Normal' : (a <= 20 ? 'Leve' : (a <= 25 ? 'Moderado' : 'Severo')) }
-    ]
+    ],
+    sequence: ['im12','hva','dasa','metaducto']
   },
   { id: 'pieplanocavo', name: 'Pie plano / Pie cavo', projection: 'Dorsoplantar y Lateral con carga',
     angles: [
@@ -171,8 +193,22 @@ const PATHOLOGIES = [
         parts: ['point_calcaneus_inferior','point_talonavicular_inferior','point_sesamoid_inferior'],
         classify: a => a < 115 ? 'Pie cavo' : (a <= 130 ? 'Normal' : 'Pie plano') },
       { id: 'calcpitch', name: 'Calcaneal pitch (inclinación calcánea)', construction: 'vs_horizontal', projTag: 'Lateral',
-        parts: ['calcaneus_inferior_line'], classify: a => a < 20 ? 'Disminuido (pie plano)' : (a <= 25 ? 'Normal' : 'Aumentado (pie cavo)') }
-    ]
+        parts: ['calcaneus_inferior_line'], classify: a => a < 20 ? 'Disminuido (pie plano)' : (a <= 25 ? 'Normal' : 'Aumentado (pie cavo)') },
+      { id: 'meschan', name: 'Ángulo de Meschan (talo-2º metatarsiano)', construction: 'two_lines', projTag: 'Lateral',
+        parts: ['axis_talus','axis_2mtt'], classify: a => a < 4 ? 'Normal' : 'Alterado (alternativa a Meary, mejor reproducibilidad referida)' }
+    ],
+    sequence: ['kite','meary','costabartani','djian','calcpitch','meschan']
+  },
+  { id: 'calcaneo', name: 'Fracturas de calcáneo', projection: 'Lateral',
+    angles: [
+      { id: 'bohler', name: 'Ángulo de Böhler', construction: 'vertex', projTag: 'Lateral',
+        parts: ['point_calc_anterior_process','point_calc_posterior_facet_apex','point_calc_tuberosity'],
+        classify: a => a < 20 ? 'Disminuido (sugiere fractura con aplastamiento)' : (a <= 40 ? 'Normal' : 'Aumentado') },
+      { id: 'gissane', name: 'Ángulo de Gissane (crucial angle)', construction: 'vertex', projTag: 'Lateral',
+        parts: ['point_calc_gissane_lateral','point_calc_gissane_apex','point_calc_gissane_posterior'],
+        classify: a => a < 120 ? 'Disminuido' : (a <= 145 ? 'Normal' : 'Aumentado') }
+    ],
+    sequence: ['bohler','gissane']
   },
   { id: 'tobillo', name: 'Tobillo / Pierna', projection: 'Mortaja, AP y Lateral',
     angles: [
@@ -188,14 +224,16 @@ const PATHOLOGIES = [
       { id: 'arcotibial', name: 'Arco de curvatura de superficie articular tibial', construction: 'two_lines', projTag: 'Lateral',
         parts: ['tangent_post_tibial','tangent_ant_tibial'],
         classify: a => a < 65 ? 'Disminuido' : (a <= 70 ? 'Normal' : 'Aumentado') }
-    ]
+    ],
+    sequence: ['talocrural','talartilt','oblictibioastrag','arcotibial']
   },
   { id: 'escoliosis', name: 'Escoliosis (Ángulo de Cobb)', projection: 'Columna completa AP/PA', isCobb: true },
   { id: 'distancias', name: 'Distancias — Sindesmosis / Mortaja', projection: 'AP y Mortaja', isDistance: true,
     measures: [
       { id: 'ecm', name: 'Espacio claro medial (ECM)', classify: mm => mm < 4 ? 'Normal' : 'Aumentado (sugiere lesión sindesmal/deltoidea)' },
       { id: 'ectf', name: 'Espacio claro tibiofibular (ECTF)', classify: mm => mm < 6 ? 'Normal' : 'Aumentado (sugiere diástasis sindesmal)' },
-      { id: 'overlap', name: 'Solapamiento tibioperoneo (overlap)', classify: mm => mm >= 6 ? 'Normal' : 'Disminuido (sugiere lesión sindesmal)' }
+      { id: 'overlap', name: 'Solapamiento tibioperoneo (overlap)', classify: mm => mm >= 6 ? 'Normal' : 'Disminuido (sugiere lesión sindesmal)' },
+      { id: 'shenton_tobillo', name: 'Línea de Shenton de tobillo (discontinuidad)', classify: mm => mm < 2 ? 'Congruente' : 'Incongruente (sugiere malreducción o fractura)' }
     ]
   }
 ];
@@ -871,24 +909,117 @@ document.getElementById('btnExportPdf').addEventListener('click', () => {
   doc.save('informe_medicion.pdf');
 });
 
-// ============ PERSISTENCIA (localStorage) ============
-document.getElementById('btnSaveSession').addEventListener('click', () => {
-  if (!img) { sessionStatus.textContent = 'Carga una imagen primero.'; return; }
-  try {
-    const session = {
-      imageDataUrl: canvas.toDataURL('image/jpeg', 0.85),
-      currentPathIdx, landmarkStore, measurements, cobbCurves, distanceMeasurements, pxPerMm,
-      side: sideSel.value, patientId: patientIdInput.value, savedAt: new Date().toISOString()
-    };
-    localStorage.setItem('visor_angulos_session', JSON.stringify(session));
-    sessionStatus.textContent = 'Sesión guardada en este dispositivo.';
-  } catch (err) { sessionStatus.textContent = 'No se pudo guardar (imagen muy grande para el almacenamiento local).'; }
+
+
+// ============ MODO OSCURO ============
+const btnDarkMode = document.getElementById('btnDarkMode');
+function applyTheme(theme) {
+  document.body.setAttribute('data-theme', theme);
+  btnDarkMode.textContent = theme === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro';
+  localStorage.setItem('visor_angulos_theme', theme);
+}
+btnDarkMode.addEventListener('click', () => {
+  const current = document.body.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+});
+applyTheme(localStorage.getItem('visor_angulos_theme') || 'light');
+
+// ============ PROTOCOLO POR INDICACIÓN CLÍNICA ============
+const btnProtocol = document.getElementById('btnProtocol');
+const protocolStatus = document.getElementById('protocolStatus');
+let protocolActive = false;
+
+btnProtocol.addEventListener('click', () => {
+  const p = currentPath();
+  if (!p.sequence) { protocolStatus.textContent = 'Esta patología no tiene protocolo predefinido.'; return; }
+  if (!img) { protocolStatus.textContent = 'Carga una imagen primero.'; return; }
+  protocolActive = true;
+  advanceProtocol();
 });
 
-document.getElementById('btnLoadSession').addEventListener('click', () => {
-  const raw = localStorage.getItem('visor_angulos_session');
-  if (!raw) { sessionStatus.textContent = 'No hay sesión guardada.'; return; }
-  const session = JSON.parse(raw);
+function advanceProtocol() {
+  const p = currentPath();
+  if (!protocolActive || !p.sequence) return;
+  const done = measurements[p.id] || {};
+  const next = p.sequence.find(id => !done[id]);
+  if (next) {
+    selectAngle(next);
+    const idx = p.sequence.indexOf(next);
+    protocolStatus.textContent = `Protocolo: paso ${idx+1}/${p.sequence.length} — ${currentAngleDef().name}`;
+  } else {
+    protocolActive = false;
+    protocolStatus.textContent = '✓ Protocolo completo — todos los ángulos de esta patología fueron medidos.';
+  }
+}
+
+// ============ HISTORIAL MÚLTIPLE DE SESIONES ============
+const SESSIONS_KEY = 'visor_angulos_sessions';
+function getSessions() {
+  try { return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]'); } catch { return []; }
+}
+function saveSessions(list) {
+  try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(list)); return true; }
+  catch { return false; }
+}
+
+document.getElementById('btnSaveSession').addEventListener('click', () => {
+  if (!img) { sessionStatus.textContent = 'Carga una imagen primero.'; return; }
+  const entry = {
+    id: Date.now().toString(36),
+    imageDataUrl: canvas.toDataURL('image/jpeg', 0.85),
+    currentPathIdx, landmarkStore, measurements, cobbCurves, distanceMeasurements, pxPerMm,
+    side: sideSel.value, patientId: patientIdInput.value || '(sin ID)', savedAt: new Date().toISOString()
+  };
+  const list = getSessions();
+  list.unshift(entry);
+  const ok = saveSessions(list.slice(0, 25)); // límite razonable para no saturar localStorage
+  sessionStatus.textContent = ok ? `Sesión guardada (${list.length} en total).` : 'No se pudo guardar (espacio local insuficiente para esta imagen).';
+  renderSessionList();
+});
+
+document.getElementById('btnLoadSession').addEventListener('click', () => { renderSessionList(true); });
+
+function renderSessionList(forceOpen) {
+  let box = document.getElementById('sessionListBox');
+  const list = getSessions();
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'sessionListBox';
+    box.style.display = 'none';
+    box.style.flexDirection = 'column';
+    box.style.gap = '6px';
+    box.style.marginTop = '8px';
+    document.getElementById('sessionStatus').insertAdjacentElement('afterend', box);
+  }
+  if (forceOpen) box.style.display = box.style.display === 'none' ? 'flex' : 'none';
+  if (box.style.display === 'none') return;
+
+  box.innerHTML = `<input id="sessionSearch" type="text" placeholder="Buscar por ID de paciente..." style="width:220px;" />`;
+  const listEl = document.createElement('div');
+  listEl.style.display = 'flex'; listEl.style.flexDirection = 'column'; listEl.style.gap = '4px';
+  box.appendChild(listEl);
+
+  function renderFiltered(filter) {
+    const f = (filter || '').toLowerCase();
+    const filtered = list.filter(s => (s.patientId || '').toLowerCase().includes(f));
+    listEl.innerHTML = filtered.length === 0 ? '<span style="font-size:12px; color:var(--text-secondary);">Sin resultados.</span>' : '';
+    filtered.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.fontSize = '12px'; row.style.justifyContent = 'space-between';
+      row.innerHTML = `<span>${s.patientId} — ${s.side} — ${new Date(s.savedAt).toLocaleString()}</span>`;
+      const btn = document.createElement('button');
+      btn.textContent = 'Cargar'; btn.className = 'secondary'; btn.style.width = 'auto'; btn.style.height = '26px'; btn.style.fontSize = '11px';
+      btn.addEventListener('click', () => loadSessionEntry(s));
+      row.appendChild(btn);
+      listEl.appendChild(row);
+    });
+  }
+  renderFiltered('');
+  box.querySelector('#sessionSearch').addEventListener('input', (e) => renderFiltered(e.target.value));
+}
+
+function loadSessionEntry(session) {
   loadImageFromDataUrl(session.imageDataUrl, () => {
     currentPathIdx = session.currentPathIdx || 0;
     landmarkStore = session.landmarkStore || {};
@@ -897,12 +1028,19 @@ document.getElementById('btnLoadSession').addEventListener('click', () => {
     distanceMeasurements = session.distanceMeasurements || {};
     pxPerMm = session.pxPerMm || null;
     sideSel.value = session.side || 'Derecho';
-    patientIdInput.value = session.patientId || '';
+    patientIdInput.value = session.patientId === '(sin ID)' ? '' : (session.patientId || '');
     currentAngleId = null; currentDistanceId = null; partsProgress = [];
     refreshAll();
     sessionStatus.textContent = `Sesión cargada (guardada el ${new Date(session.savedAt).toLocaleString()}).`;
   });
-});
+}
+
+// envolver computeAndStore para avanzar el protocolo automáticamente
+const _origComputeAndStore = computeAndStore;
+computeAndStore = function() {
+  _origComputeAndStore();
+  if (protocolActive) setTimeout(advanceProtocol, 50);
+};
 
 refreshAll();
 </script>
