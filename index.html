@@ -153,8 +153,6 @@ const PATHOLOGIES = [
         parts: ['axis_1mtt','axis_prox_phalanx_hallux'], classify: a => a < 15 ? 'Normal' : 'Hallux valgus' },
       { id: 'dasa', name: 'DASA (Distal Articular Set Angle)', construction: 'two_lines',
         parts: ['axis_1mtt','artic_surface_distal_1mtt'], classify: a => a < 6 ? 'Normal' : 'Aumentado' },
-      { id: 'dmaa', name: 'DMAA (Distal Metatarsal Articular Angle)', construction: 'two_lines',
-        parts: ['axis_1mtt','artic_surface_distal_1mtt'], classify: a => a < 10 ? 'Normal' : 'Aumentado (orientación articular distal en valgo)' },
       { id: 'metaducto', name: 'Metatarso aducto (eje mediopié)', construction: 'perp_bisector',
         parts: ['axis_2mtt','axis_midfoot_medial','axis_midfoot_lateral'],
         classify: a => a < 15 ? 'Normal' : (a <= 20 ? 'Leve' : (a <= 25 ? 'Moderado' : 'Severo')) }
