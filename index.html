@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Visor de Ángulos Radiológicos — Pie, Tobillo y Columna</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   :root {
     --surface-1: #f7f7f5; --surface-2: #eeeeec; --border: #d9d9d6;
@@ -1006,9 +1005,34 @@ document.getElementById('btnExportPng').addEventListener('click', () => {
   link.click();
 });
 
-// ============ EXPORTAR PDF ============
-document.getElementById('btnExportPdf').addEventListener('click', () => {
-  if (!img || !window.jspdf) { alert('No se pudo cargar el generador de PDF. Verifica tu conexión.'); return; }
+// ============ EXPORTAR PDF (jsPDF se carga bajo demanda, no al abrir la app) ============
+let jsPdfLoadPromise = null;
+function loadJsPdf() {
+  if (window.jspdf) return Promise.resolve();
+  if (jsPdfLoadPromise) return jsPdfLoadPromise;
+  jsPdfLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => { jsPdfLoadPromise = null; reject(new Error('No se pudo cargar el generador de PDF (revisa tu conexión o si tu red bloquea cdnjs.cloudflare.com).')); };
+    document.head.appendChild(s);
+  });
+  return jsPdfLoadPromise;
+}
+
+document.getElementById('btnExportPdf').addEventListener('click', async () => {
+  if (!img) return;
+  const btn = document.getElementById('btnExportPdf');
+  const originalText = btn.textContent;
+  btn.textContent = 'Cargando generador de PDF...'; btn.disabled = true;
+  try {
+    await loadJsPdf();
+  } catch (err) {
+    alert(err.message);
+    btn.textContent = originalText; btn.disabled = false;
+    return;
+  }
+  btn.textContent = originalText; btn.disabled = false;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
