@@ -60,7 +60,18 @@
     </select>
     <label style="font-size:13px; color:var(--text-secondary); margin-left:8px;">Paciente/ID (opcional):</label>
     <input id="patientId" type="text" placeholder="ej. iniciales o ficha" style="width:160px;" />
+    <label style="font-size:13px; color:var(--text-secondary); margin-left:8px;">Calidad de la Rx:</label>
+    <select id="qualitySel">
+      <option value="Adecuada (carga, rotación correcta)">Adecuada</option>
+      <option value="Rotación subóptima">Rotación subóptima</option>
+      <option value="Sin carga / carga incompleta">Sin carga / incompleta</option>
+      <option value="Otra limitación técnica">Otra limitación técnica</option>
+    </select>
     <button id="btnDarkMode" class="secondary" style="margin-left:auto;">🌙 Modo oscuro</button>
+    <button id="btnReadOnly" class="secondary">🔒 Modo solo lectura</button>
+  </div>
+  <div id="readOnlyBanner" style="display:none; background:#fff3cd; color:#7a5b00; padding:8px 12px; border-radius:8px; font-size:13px;">
+    🔒 Modo solo lectura activo — el marcado y la edición están deshabilitados. Útil para compartir pantalla en revisión docente.
   </div>
 
   <div id="pathTabs" class="row"></div>
@@ -78,12 +89,21 @@
     <button id="btnZoomOut" class="secondary" style="width:34px; padding:0;">−</button>
     <button id="btnZoomReset" class="secondary" style="width:auto;">100%</button>
     <button id="btnZoomIn" class="secondary" style="width:34px; padding:0;">+</button>
+    <button id="btnGuides" class="secondary">📐 Guías de orientación</button>
+    <button id="btnMagnifier" class="secondary">🔍 Lupa</button>
   </div>
 
   <div class="row">
     <button id="btnProtocol" class="secondary">▶ Iniciar protocolo de esta patología</button>
     <span id="protocolStatus" style="font-size:12px; color:var(--text-secondary);"></span>
   </div>
+
+  <div id="contraBox" class="row" style="display:none; background:var(--surface-1); padding:10px; border-radius:var(--radius); border:1px solid var(--border);">
+    <span style="font-size:13px;">Talar tilt contralateral: carga la Rx del lado opuesto y marca plafón tibial + domo astragalino (2 puntos cada uno) para comparar.</span>
+    <button id="btnLoadContra" class="secondary">Cargar imagen contralateral</button>
+    <span id="contraStatus" style="font-size:12px; color:var(--text-secondary);"></span>
+  </div>
+  <canvas id="cvContra" style="display:none; max-width:100%; border:1px solid var(--border); border-radius:8px;"></canvas>
 
   <div id="angleChips" class="row"></div>
 
@@ -193,7 +213,7 @@ const PATHOLOGIES = [
         parts: ['point_calcaneus_inferior','point_talonavicular_inferior','point_sesamoid_inferior'],
         classify: a => a < 115 ? 'Pie cavo' : (a <= 130 ? 'Normal' : 'Pie plano') },
       { id: 'calcpitch', name: 'Calcaneal pitch (inclinación calcánea)', construction: 'vs_horizontal', projTag: 'Lateral',
-        parts: ['calcaneus_inferior_line'], classify: a => a < 20 ? 'Disminuido (pie plano)' : (a <= 25 ? 'Normal' : 'Aumentado (pie cavo)') },
+        parts: ['calcaneus_inferior_line'], classify: a => a < 18 ? 'Disminuido (pie plano)' : (a <= 30 ? 'Normal (rango de referencia amplio: 10-32° según serie consultada)' : 'Aumentado (pie cavo)') },
       { id: 'meschan', name: 'Ángulo de Meschan (talo-2º metatarsiano)', construction: 'two_lines', projTag: 'Lateral',
         parts: ['axis_talus','axis_2mtt'], classify: a => a < 4 ? 'Normal' : 'Alterado (alternativa a Meary, mejor reproducibilidad referida)' }
     ],
@@ -263,6 +283,7 @@ const calibMmInput = document.getElementById('calibMm');
 const calibStatus = document.getElementById('calibStatus');
 const sideSel = document.getElementById('sideSel');
 const patientIdInput = document.getElementById('patientId');
+const qualitySel = document.getElementById('qualitySel');
 const sessionStatus = document.getElementById('sessionStatus');
 const narrativeText = document.getElementById('narrativeText');
 
@@ -316,6 +337,7 @@ function renderAngleChips() {
   angleChipsEl.innerHTML = '';
   cobbLabels.style.display = 'none';
   calibBox.style.display = 'none';
+  document.getElementById('contraBox').style.display = (p.id === 'tobillo') ? 'flex' : 'none';
   if (p.isCobb) { angleChipsEl.style.display = 'none'; cobbLabels.style.display = 'flex'; return; }
   if (p.isDistance) {
     angleChipsEl.style.display = 'flex';
@@ -482,22 +504,48 @@ fileInput.addEventListener('change', (e) => {
   reader.readAsDataURL(file);
 });
 
-// ============ MARCADO DE PUNTOS (mouse + touch) ============
+// ============ MARCADO DE PUNTOS (mouse + touch) + ARRASTRE PARA CORREGIR ============
 function getCanvasPoint(e) {
   const rect = canvas.getBoundingClientRect();
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const clientX = e.touches ? e.touches[0].clientX : (e.changedTouches ? e.changedTouches[0].clientX : e.clientX);
+  const clientY = e.touches ? e.touches[0].clientY : (e.changedTouches ? e.changedTouches[0].clientY : e.clientY);
   return {
     x: (clientX - rect.left) * (canvas.width / rect.width),
     y: (clientY - rect.top) * (canvas.height / rect.height)
   };
 }
 
+let readOnlyMode = false;
+let draggingPoint = null; // {getPoints: ()=>[...], index}
+
+function collectEditablePointRefs() {
+  const p = currentPath();
+  const refs = [];
+  if (p.isDistance && currentDistanceId) {
+    distanceInProgress.forEach((pt, i) => refs.push({ pt, set: (nx,ny) => { distanceInProgress[i] = {x:nx,y:ny}; } }));
+  } else if (p.isCobb) {
+    cobbInProgress.forEach((pt, i) => refs.push({ pt, set: (nx,ny) => { cobbInProgress[i] = {x:nx,y:ny}; } }));
+  } else if (currentAngleId) {
+    partsProgress.forEach((pp, pi) => pp.points.forEach((pt, i) => refs.push({ pt, set: (nx,ny) => { partsProgress[pi].points[i] = {x:nx,y:ny}; } })));
+  }
+  return refs;
+}
+
+function findNearbyRef(x, y) {
+  const refs = collectEditablePointRefs();
+  for (const r of refs) { if (Math.hypot(r.pt.x - x, r.pt.y - y) < 10) return r; }
+  return null;
+}
+
 function handlePointerDown(e) {
-  if (!img) return;
+  if (!img || readOnlyMode) return;
   e.preventDefault();
   const { x, y } = getCanvasPoint(e);
   const p = currentPath();
+
+  // ¿se está agarrando un punto ya marcado para corregirlo?
+  const nearby = findNearbyRef(x, y);
+  if (nearby && !calibrating) { draggingPoint = nearby; return; }
 
   if (calibrating) {
     calibPoints.push({x,y});
@@ -549,6 +597,45 @@ function handlePointerDown(e) {
 canvas.addEventListener('mousedown', handlePointerDown);
 canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
 
+// arrastre de puntos ya marcados (corrección fina) + lupa
+let magnifierOn = false;
+let showGuides = false;
+let lastCursorCanvasPt = null;
+
+function handlePointerMove(e) {
+  if (!img) return;
+  const { x, y } = getCanvasPoint(e);
+  lastCursorCanvasPt = { x, y };
+  if (draggingPoint) {
+    e.preventDefault();
+    draggingPoint.set(x, y);
+    draw();
+    return;
+  }
+  if (magnifierOn) draw();
+}
+function handlePointerUp(e) {
+  if (draggingPoint) {
+    draggingPoint = null;
+    // si la medición ya estaba completa, recalcular con las coordenadas corregidas
+    const p = currentPath();
+    if (!p.isCobb && !p.isDistance && currentAngleId && firstIncompletePartIndex() === -1) computeAndStore();
+    else if (p.isDistance && distanceInProgress.length === 2) computeDistance();
+    draw();
+  }
+}
+canvas.addEventListener('mousemove', handlePointerMove);
+canvas.addEventListener('mouseup', handlePointerUp);
+canvas.addEventListener('touchmove', handlePointerMove, { passive: false });
+canvas.addEventListener('touchend', handlePointerUp);
+
+document.getElementById('btnGuides').addEventListener('click', () => { showGuides = !showGuides; draw(); });
+document.getElementById('btnMagnifier').addEventListener('click', (e) => {
+  magnifierOn = !magnifierOn;
+  e.target.classList.toggle('secondary', !magnifierOn);
+  draw();
+});
+
 // ============ CALIBRACIÓN ============
 document.getElementById('btnCalibConfirm').addEventListener('click', () => {
   const mm = parseFloat(calibMmInput.value);
@@ -596,6 +683,14 @@ function computeAngleForDef(def, pts) {
   return null;
 }
 
+function isPhysiologicallyImplausible(construction, angleDeg) {
+  // filtro genérico de sanidad: no evalúa "normal clínico", solo detecta líneas casi
+  // degeneradas (puntos mal ubicados o casi coincidentes) que sugieren error de marcado
+  if (construction === 'two_lines' || construction === 'perp_bisector') return angleDeg < 1.5 || angleDeg > 178;
+  if (construction === 'vertex') return angleDeg < 3 || angleDeg > 177;
+  return false;
+}
+
 function computeAndStore() {
   const p = currentPath();
   const def = currentAngleDef();
@@ -603,8 +698,9 @@ function computeAndStore() {
   const angleDeg = computeAngleForDef(def, pts);
   const rounded = Math.round(angleDeg * 10) / 10;
   const severity = def.classify(rounded);
+  const implausible = isPhysiologicallyImplausible(def.construction, rounded);
   if (!measurements[p.id]) measurements[p.id] = {};
-  measurements[p.id][def.id] = { angleDeg: rounded, severity, points: pts.map(pt => ({...pt})) };
+  measurements[p.id][def.id] = { angleDeg: rounded, severity, points: pts.map(pt => ({...pt})), implausible };
   partsProgress.forEach(pp => { landmarkStore[pp.landmarkId] = pp.points.map(pt => ({...pt})); });
   renderAngleChips(); renderResults(); draw();
 }
@@ -678,6 +774,44 @@ function draw() {
       if (calibPoints.length === 2) drawLine(calibPoints[0], calibPoints[1], '#E8B930', 1);
     }
   }
+
+  if (showGuides) drawOrientationGuides();
+  if (magnifierOn && lastCursorCanvasPt) drawMagnifier();
+}
+
+function drawOrientationGuides() {
+  // guía genérica de orientación (no es una plantilla ósea real): líneas de tercios + rótulos
+  ctx.save();
+  ctx.strokeStyle = 'rgba(56,138,221,0.35)';
+  ctx.setLineDash([6,4]);
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, canvas.height/2); ctx.lineTo(canvas.width, canvas.height/2); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(56,138,221,0.7)';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('Lado ' + sideSel.value + ' — verifica orientación medial/lateral antes de marcar', 10, 16);
+  ctx.restore();
+}
+
+function drawMagnifier() {
+  const zoomFactor = 3.5;
+  const srcSize = 60;
+  const dstSize = 150;
+  const { x, y } = lastCursorCanvasPt;
+  const sx = Math.max(0, Math.min(canvas.width - srcSize, x - srcSize/2));
+  const sy = Math.max(0, Math.min(canvas.height - srcSize, y - srcSize/2));
+  const dx = canvas.width - dstSize - 10;
+  const dy = 10;
+  ctx.save();
+  ctx.strokeStyle = '#E8B930'; ctx.lineWidth = 2;
+  ctx.strokeRect(dx, dy, dstSize, dstSize);
+  ctx.drawImage(img, sx * (img.width/canvas.width), sy * (img.height/canvas.height), srcSize * (img.width/canvas.width), srcSize * (img.height/canvas.height), dx, dy, dstSize, dstSize);
+  // crosshair centrado en la lupa
+  ctx.strokeStyle = 'rgba(216,90,48,0.8)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(dx+dstSize/2, dy); ctx.lineTo(dx+dstSize/2, dy+dstSize); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(dx, dy+dstSize/2); ctx.lineTo(dx+dstSize, dy+dstSize/2); ctx.stroke();
+  ctx.restore();
 }
 
 function drawLine(a, b, col, alpha) {
@@ -775,7 +909,7 @@ function renderResults() {
         <span style="font-weight:500;">${c.angle.toFixed(1)}° — ${c.severity}</span></div>`).join('');
     resultCard.style.display = 'block';
     resultJson.textContent = JSON.stringify({
-      success: true, pathology: 'Escoliosis', side: sideSel.value, patient_id: patientIdInput.value || null,
+      success: true, pathology: 'Escoliosis', side: sideSel.value, patient_id: patientIdInput.value || null, image_quality: qualitySel.value,
       detected_curves: cobbCurves.map(c => ({
         curve_type: c.curveType, evs_label: c.evsLabel, evi_label: c.eviLabel,
         landmarks: {
@@ -799,7 +933,7 @@ function renderResults() {
     }).join('');
     resultCard.style.display = 'block';
     resultJson.textContent = JSON.stringify({
-      success: true, pathology: p.name, side: sideSel.value, patient_id: patientIdInput.value || null,
+      success: true, pathology: p.name, side: sideSel.value, patient_id: patientIdInput.value || null, image_quality: qualitySel.value,
       scale_px_per_mm: pxPerMm ? Math.round(pxPerMm*100)/100 : null,
       measurements: ids.map(mid => {
         const def = p.measures.find(m => m.id === mid);
@@ -815,18 +949,20 @@ function renderResults() {
   resultSummary.innerHTML = Object.keys(m).map(angleId => {
     const def = p.angles.find(a => a.id === angleId);
     const r = m[angleId];
-    return `<div class="row" style="justify-content:space-between;"><span>${def.name}</span><span style="font-weight:500;">${r.angleDeg.toFixed(1)}° — ${r.severity}</span></div>`;
+    const warn = r.implausible ? ' <span title="Valor fuera de todo rango fisiológico plausible — probable error de marcado" style="color:#c0392b;">⚠️ revisar puntos</span>' : '';
+    return `<div class="row" style="justify-content:space-between;"><span>${def.name}</span><span style="font-weight:500;">${r.angleDeg.toFixed(1)}° — ${r.severity}${warn}</span></div>`;
   }).join('');
   resultCard.style.display = 'block';
   validationNote.textContent = getValidationNote(p);
   resultJson.textContent = JSON.stringify({
     success: true, pathology: p.name, side: sideSel.value, patient_id: patientIdInput.value || null,
+    image_quality: qualitySel.value,
     angles: Object.keys(m).map(angleId => {
       const def = p.angles.find(a => a.id === angleId);
       const r = m[angleId];
       return { angle_id: angleId, angle_name: def.name,
         landmarks: r.points.map(pt => [Math.round(pt.x/scale), Math.round(pt.y/scale)]),
-        angle_degrees: r.angleDeg, severity: r.severity };
+        angle_degrees: r.angleDeg, severity: r.severity, plausibility_warning: r.implausible || false };
     }), confidence_score: null, error_message: null
   }, null, 2);
 }
@@ -876,37 +1012,64 @@ document.getElementById('btnExportPdf').addEventListener('click', () => {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
   let y = 40;
-  doc.setFontSize(14); doc.text('Informe de medición radiológica', 40, y); y += 20;
+  doc.setFontSize(14); doc.text('Informe de medición radiológica — todas las patologías de esta sesión', 40, y); y += 20;
   doc.setFontSize(10);
-  doc.text(`Patología: ${currentPath().name}  |  Lado: ${sideSel.value}  |  ID: ${patientIdInput.value || '—'}`, 40, y); y += 14;
-  doc.text(`Fecha: ${new Date().toLocaleString()}`, 40, y); y += 20;
+  doc.text(`Lado: ${sideSel.value}  |  ID: ${patientIdInput.value || '—'}  |  Calidad Rx: ${qualitySel.value}`, 40, y); y += 14;
+  doc.text(`Fecha: ${new Date().toLocaleString()}  |  Imagen mostrada: vista actual (${currentPath().name})`, 40, y); y += 20;
 
   const imgData = canvas.toDataURL('image/png');
   const imgWidth = pageWidth - 80;
   const imgHeight = imgWidth * (canvas.height / canvas.width);
   doc.addImage(imgData, 'PNG', 40, y, imgWidth, imgHeight);
-  y += imgHeight + 20;
+  y += imgHeight + 24;
 
-  doc.setFontSize(11); doc.text('Resultados:', 40, y); y += 16;
-  doc.setFontSize(10);
-  const p = currentPath();
-  let entries = [];
-  if (p.isCobb) entries = cobbCurves.map(c => `${c.curveType}: ${c.angle.toFixed(1)}° — ${c.severity}`);
-  else if (p.isDistance) entries = Object.keys(distanceMeasurements).map(mid => {
-    const def = p.measures.find(m => m.id === mid); const r = distanceMeasurements[mid];
-    return `${def.name}: ${r.mm !== null ? r.mm.toFixed(1)+' mm' : r.px.toFixed(1)+' px'} — ${r.severity}`;
+  // recorrer TODAS las patologías con mediciones registradas, no solo la activa
+  PATHOLOGIES.forEach(p => {
+    let entries = [];
+    if (p.isCobb) entries = cobbCurves.map(c => `${c.curveType}${c.evsLabel||c.eviLabel?` (${c.evsLabel||'?'}-${c.eviLabel||'?'})`:''}: ${c.angle.toFixed(1)}° — ${c.severity}`);
+    else if (p.isDistance) entries = Object.keys(distanceMeasurements).map(mid => {
+      const def = p.measures.find(m => m.id === mid); const r = distanceMeasurements[mid];
+      return `${def.name}: ${r.mm !== null ? r.mm.toFixed(1)+' mm' : r.px.toFixed(1)+' px'} — ${r.severity}`;
+    });
+    else if (measurements[p.id]) entries = Object.keys(measurements[p.id]).map(aid => {
+      const def = p.angles.find(a => a.id === aid); const r = measurements[p.id][aid];
+      return `${def.name}: ${r.angleDeg.toFixed(1)}°${r.implausible ? ' [revisar: posible error de marcado]' : ''} — ${r.severity}`;
+    });
+    if (entries.length === 0) return;
+    if (y > pageHeight - 100) { doc.addPage(); y = 40; }
+    doc.setFontSize(11); doc.setTextColor(0); doc.text(p.name + ':', 40, y); y += 16;
+    doc.setFontSize(10);
+    entries.forEach(line => {
+      if (y > pageHeight - 60) { doc.addPage(); y = 40; }
+      doc.text('• ' + line, 48, y); y += 14;
+    });
+    y += 8;
   });
-  else if (measurements[p.id]) entries = Object.keys(measurements[p.id]).map(aid => {
-    const def = p.angles.find(a => a.id === aid); const r = measurements[p.id][aid];
-    return `${def.name}: ${r.angleDeg.toFixed(1)}° — ${r.severity}`;
-  });
-  entries.forEach(line => { doc.text(line, 40, y); y += 14; });
 
   doc.setFontSize(8); doc.setTextColor(120);
-  doc.text('Herramienta de apoyo para marcado manual. No constituye diagnóstico automático.', 40, doc.internal.pageSize.getHeight() - 30);
+  doc.text('Herramienta de apoyo para marcado manual. No constituye diagnóstico automático.', 40, pageHeight - 30);
 
-  doc.save('informe_medicion.pdf');
+  doc.save('informe_medicion_consolidado.pdf');
+});
+
+// ============ ATAJOS DE TECLADO ============
+document.addEventListener('keydown', (e) => {
+  if (readOnlyMode) return;
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return; // no interferir con escritura
+  if (e.key === 'Escape' || e.key === 'Backspace') {
+    e.preventDefault();
+    const action = undoStack.pop();
+    if (action) { action.undo(); draw(); renderPartsList(); status.textContent = 'Último punto deshecho (atajo).'; }
+  } else if (e.key === 'p' || e.key === 'P') {
+    btnProtocol.click();
+  } else if (e.key === '+' || e.key === '=') {
+    document.getElementById('btnZoomIn').click();
+  } else if (e.key === '-' || e.key === '_') {
+    document.getElementById('btnZoomOut').click();
+  }
 });
 
 
@@ -923,6 +1086,20 @@ btnDarkMode.addEventListener('click', () => {
   applyTheme(current === 'dark' ? 'light' : 'dark');
 });
 applyTheme(localStorage.getItem('visor_angulos_theme') || 'light');
+
+// ============ MODO SOLO LECTURA ============
+const btnReadOnly = document.getElementById('btnReadOnly');
+const readOnlyBanner = document.getElementById('readOnlyBanner');
+const EDITABLE_IDS = ['btnLoad','btnReset','btnUndo','btnZoomIn','btnZoomOut','btnZoomReset','btnGuides','btnMagnifier',
+  'btnProtocol','btnNewCurve','btnCalibConfirm','btnExportPng','btnExportPdf','btnNarrative','btnSaveSession','btnLoadSession','btnLoadContra'];
+btnReadOnly.addEventListener('click', () => {
+  readOnlyMode = !readOnlyMode;
+  readOnlyBanner.style.display = readOnlyMode ? 'block' : 'none';
+  btnReadOnly.textContent = readOnlyMode ? '🔓 Salir de solo lectura' : '🔒 Modo solo lectura';
+  EDITABLE_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = readOnlyMode; });
+  sideSel.disabled = readOnlyMode; patientIdInput.disabled = readOnlyMode; qualitySel.disabled = readOnlyMode;
+  fileInput.disabled = readOnlyMode;
+});
 
 // ============ PROTOCOLO POR INDICACIÓN CLÍNICA ============
 const btnProtocol = document.getElementById('btnProtocol');
@@ -1007,7 +1184,7 @@ function renderSessionList(forceOpen) {
       const row = document.createElement('div');
       row.className = 'row';
       row.style.fontSize = '12px'; row.style.justifyContent = 'space-between';
-      row.innerHTML = `<span>${s.patientId} — ${s.side} — ${new Date(s.savedAt).toLocaleString()}</span>`;
+      row.innerHTML = `<span style="display:flex; align-items:center; gap:8px;"><img src="${s.imageDataUrl}" style="width:40px; height:40px; object-fit:cover; border-radius:4px; border:1px solid var(--border);" alt="miniatura" />${s.patientId} — ${s.side} — ${new Date(s.savedAt).toLocaleString()}</span>`;
       const btn = document.createElement('button');
       btn.textContent = 'Cargar'; btn.className = 'secondary'; btn.style.width = 'auto'; btn.style.height = '26px'; btn.style.fontSize = '11px';
       btn.addEventListener('click', () => loadSessionEntry(s));
@@ -1041,6 +1218,85 @@ computeAndStore = function() {
   _origComputeAndStore();
   if (protocolActive) setTimeout(advanceProtocol, 50);
 };
+
+// ============ COMPARACIÓN CONTRALATERAL (acotada a talar tilt) ============
+// Nota: se implementa como un flujo independiente y simplificado (4 clics directos,
+// sin el sistema de landmarks reutilizables) porque generalizar la comparación de
+// dos imágenes a todo el motor de la app requeriría un refactor mayor. Se prioriza
+// aquí el caso donde la comparación contralateral es clínicamente parte del estándar
+// de interpretación: el talar tilt en estrés varo.
+const cvContra = document.getElementById('cvContra');
+const ctxContra = cvContra.getContext('2d');
+const contraStatus = document.getElementById('contraStatus');
+let contraImg = null, contraScale = 1, contraPoints = [];
+
+document.getElementById('btnLoadContra').addEventListener('click', () => {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const im = new Image();
+      im.onload = () => {
+        contraImg = im;
+        const maxW = 400;
+        contraScale = Math.min(1, maxW / im.width);
+        cvContra.width = im.width * contraScale;
+        cvContra.height = im.height * contraScale;
+        cvContra.style.display = 'block';
+        contraPoints = [];
+        drawContra();
+        contraStatus.textContent = 'Marca punto 1/4 (plafón tibial, extremo 1)';
+      };
+      im.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+  inp.click();
+});
+
+const contraLabels = ['Plafón tibial, extremo 1','Plafón tibial, extremo 2','Domo astragalino, extremo 1','Domo astragalino, extremo 2'];
+cvContra.addEventListener('click', (e) => {
+  if (!contraImg || readOnlyMode || contraPoints.length >= 4) return;
+  const rect = cvContra.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (cvContra.width / rect.width);
+  const y = (e.clientY - rect.top) * (cvContra.height / rect.height);
+  contraPoints.push({x,y});
+  drawContra();
+  if (contraPoints.length < 4) {
+    contraStatus.textContent = `Marca punto ${contraPoints.length+1}/4 (${contraLabels[contraPoints.length]})`;
+  } else {
+    const v1 = {x: contraPoints[1].x - contraPoints[0].x, y: contraPoints[1].y - contraPoints[0].y};
+    const v2 = {x: contraPoints[3].x - contraPoints[2].x, y: contraPoints[3].y - contraPoints[2].y};
+    const angle = Math.round(angleBetweenVectors(v1, v2, true) * 10) / 10;
+
+    const primary = measurements['tobillo'] && measurements['tobillo']['talartilt'];
+    let comparisonMsg = `Talar tilt contralateral: ${angle}°.`;
+    if (primary) {
+      const diff = Math.abs(primary.angleDeg - angle);
+      comparisonMsg += ` Lado medido en el visor principal: ${primary.angleDeg}°. Diferencia: ${diff.toFixed(1)}° — `;
+      comparisonMsg += diff >= 5 ? 'diferencia clínicamente relevante, sugiere inestabilidad ligamentosa.' : 'diferencia dentro de lo esperable entre lados.';
+    } else {
+      comparisonMsg += ' No hay una medición de talar tilt en el lado principal aún para comparar.';
+    }
+    contraStatus.textContent = comparisonMsg;
+  }
+});
+
+function drawContra() {
+  if (!contraImg) return;
+  ctxContra.clearRect(0,0,cvContra.width,cvContra.height);
+  ctxContra.drawImage(contraImg, 0, 0, cvContra.width, cvContra.height);
+  contraPoints.forEach((pt,i) => {
+    ctxContra.beginPath(); ctxContra.arc(pt.x, pt.y, 5, 0, Math.PI*2);
+    ctxContra.fillStyle = i < 2 ? '#D85A30' : '#378ADD';
+    ctxContra.fill(); ctxContra.strokeStyle = '#fff'; ctxContra.lineWidth = 1.5; ctxContra.stroke();
+  });
+  if (contraPoints.length >= 2) { ctxContra.beginPath(); ctxContra.moveTo(contraPoints[0].x,contraPoints[0].y); ctxContra.lineTo(contraPoints[1].x,contraPoints[1].y); ctxContra.strokeStyle='#D85A30'; ctxContra.lineWidth=2; ctxContra.stroke(); }
+  if (contraPoints.length >= 4) { ctxContra.beginPath(); ctxContra.moveTo(contraPoints[2].x,contraPoints[2].y); ctxContra.lineTo(contraPoints[3].x,contraPoints[3].y); ctxContra.strokeStyle='#378ADD'; ctxContra.lineWidth=2; ctxContra.stroke(); }
+}
 
 refreshAll();
 </script>
