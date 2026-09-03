@@ -104,6 +104,54 @@
   </div>
   <canvas id="cvContra" style="display:none; max-width:100%; border:1px solid var(--border); border-radius:8px;"></canvas>
 
+  <div class="row">
+    <button id="btnCompareToggle" class="secondary">🔀 Comparación Pre-op / Post-op</button>
+    <span style="font-size:11px; color:var(--text-secondary);">Disponible para Hallux valgus y Pie plano/cavo — vista optimizada para pantallas de escritorio.</span>
+  </div>
+
+  <div id="compareSection" style="display:none; flex-direction:column; gap:10px; background:var(--surface-1); border:1px solid var(--border); border-radius:var(--radius); padding:14px;">
+    <div class="row">
+      <label style="font-size:13px; color:var(--text-secondary);">Patología a comparar:</label>
+      <select id="comparePathSel">
+        <option value="hallux">Hallux valgus / Metatarso aducto</option>
+        <option value="pieplanocavo">Pie plano / Pie cavo</option>
+      </select>
+      <button id="btnCompareExportPdf" class="secondary">Descargar comparación (PDF)</button>
+    </div>
+    <div id="compareAngleChips" class="row"></div>
+    <div id="compareNarrowNote" style="display:none; font-size:12px; color:#b8860b;">
+      ⚠️ Tu pantalla es angosta — esta vista funciona pero fue pensada para escritorio. Considera usar un PC para mayor comodidad.
+    </div>
+    <div id="compareGrid" style="display:flex; gap:14px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:280px; display:flex; flex-direction:column; gap:6px;">
+        <div class="row" style="justify-content:space-between;">
+          <b style="font-size:13px;">Pre-operatorio</b>
+          <div class="row">
+            <button id="btnLoadPre" class="secondary" style="font-size:11px; height:28px;">Cargar imagen</button>
+            <button id="btnResetPre" class="secondary" style="font-size:11px; height:28px;">Reiniciar</button>
+          </div>
+        </div>
+        <canvas id="cvPre" style="width:100%; border:1px solid var(--border); border-radius:8px; cursor:crosshair;"></canvas>
+        <span id="preStatus" style="font-size:12px; color:var(--text-secondary);">Carga la radiografía pre-operatoria.</span>
+      </div>
+      <div style="flex:1; min-width:280px; display:flex; flex-direction:column; gap:6px;">
+        <div class="row" style="justify-content:space-between;">
+          <b style="font-size:13px;">Post-operatorio</b>
+          <div class="row">
+            <button id="btnLoadPost" class="secondary" style="font-size:11px; height:28px;">Cargar imagen</button>
+            <button id="btnResetPost" class="secondary" style="font-size:11px; height:28px;">Reiniciar</button>
+          </div>
+        </div>
+        <canvas id="cvPost" style="width:100%; border:1px solid var(--border); border-radius:8px; cursor:crosshair;"></canvas>
+        <span id="postStatus" style="font-size:12px; color:var(--text-secondary);">Carga la radiografía post-operatoria.</span>
+      </div>
+    </div>
+    <div id="compareTable" style="display:flex; flex-direction:column; gap:6px; font-size:13px;"></div>
+    <p style="font-size:11px; color:var(--text-secondary); margin:4px 0 0;">
+      Nota: en este módulo de comparación, cada ángulo se marca de forma independiente en cada imagen (sin reutilización de puntos entre ángulos, a diferencia del visor principal), ya que son radiografías distintas.
+    </p>
+  </div>
+
   <div id="angleChips" class="row"></div>
 
   <div id="canvasWrapper"><canvas id="cv"></canvas></div>
@@ -1321,6 +1369,265 @@ function drawContra() {
   if (contraPoints.length >= 2) { ctxContra.beginPath(); ctxContra.moveTo(contraPoints[0].x,contraPoints[0].y); ctxContra.lineTo(contraPoints[1].x,contraPoints[1].y); ctxContra.strokeStyle='#D85A30'; ctxContra.lineWidth=2; ctxContra.stroke(); }
   if (contraPoints.length >= 4) { ctxContra.beginPath(); ctxContra.moveTo(contraPoints[2].x,contraPoints[2].y); ctxContra.lineTo(contraPoints[3].x,contraPoints[3].y); ctxContra.strokeStyle='#378ADD'; ctxContra.lineWidth=2; ctxContra.stroke(); }
 }
+
+// ============ COMPARACIÓN PRE-OP / POST-OP (Hallux valgus y Pie plano/cavo) ============
+// Módulo independiente y autocontenido: cada ángulo se marca completo en cada imagen
+// (sin el sistema de reutilización de landmarks del visor principal), ya que Pre y Post
+// son radiografías distintas del mismo pie. Pensado para pantallas anchas (PC).
+
+function drawLineOnCtx(ctx2, a, b, col, alpha) {
+  ctx2.globalAlpha = alpha;
+  ctx2.beginPath(); ctx2.moveTo(a.x,a.y); ctx2.lineTo(b.x,b.y);
+  ctx2.strokeStyle = col; ctx2.lineWidth = 2; ctx2.stroke();
+  ctx2.globalAlpha = 1;
+}
+function drawDefLinesOnCtx(ctx2, def, pts, alpha) {
+  const colA = '#D85A30', colB = '#378ADD';
+  pts.forEach(pt => {
+    ctx2.beginPath(); ctx2.arc(pt.x,pt.y,5,0,Math.PI*2);
+    ctx2.fillStyle = colA; ctx2.fill(); ctx2.strokeStyle = '#fff'; ctx2.lineWidth = 1.5; ctx2.stroke();
+  });
+  if (def.construction === 'two_lines') {
+    if (pts.length >= 2) drawLineOnCtx(ctx2, pts[0], pts[1], colA, alpha);
+    if (pts.length >= 4) drawLineOnCtx(ctx2, pts[2], pts[3], colB, alpha);
+  } else if (def.construction === 'vertex') {
+    if (pts.length >= 2) drawLineOnCtx(ctx2, pts[1], pts[0], colA, alpha);
+    if (pts.length >= 3) drawLineOnCtx(ctx2, pts[1], pts[2], colB, alpha);
+  } else if (def.construction === 'perp_bisector') {
+    if (pts.length >= 2) drawLineOnCtx(ctx2, pts[0], pts[1], colA, alpha);
+    if (pts.length >= 4) drawLineOnCtx(ctx2, pts[2], pts[3], colB, 0.5*alpha);
+    if (pts.length >= 6) {
+      drawLineOnCtx(ctx2, pts[4], pts[5], colB, 0.5*alpha);
+      const medMid = {x:(pts[2].x+pts[3].x)/2, y:(pts[2].y+pts[3].y)/2};
+      const latMid = {x:(pts[4].x+pts[5].x)/2, y:(pts[4].y+pts[5].y)/2};
+      drawLineOnCtx(ctx2, medMid, latMid, colB, alpha);
+      const cx=(medMid.x+latMid.x)/2, cy=(medMid.y+latMid.y)/2, dx=latMid.x-medMid.x, dy=latMid.y-medMid.y;
+      const len=Math.hypot(dx,dy)||1, px=-dy/len, py=dx/len, half=len*0.8;
+      drawLineOnCtx(ctx2, {x:cx-px*half,y:cy-py*half}, {x:cx+px*half,y:cy+py*half}, '#639922', alpha);
+    }
+  } else if (def.construction === 'vs_horizontal') {
+    if (pts.length >= 2) {
+      drawLineOnCtx(ctx2, pts[0], pts[1], colA, alpha);
+      drawLineOnCtx(ctx2, pts[0], {x: pts[0].x + 60, y: pts[0].y}, '#999', alpha*0.6);
+    }
+  }
+}
+
+function totalPointsForDef(def) { return def.parts.reduce((sum, id) => sum + LANDMARKS[id].count, 0); }
+function pointLabelsForDef(def) {
+  const labels = [];
+  def.parts.forEach(id => { const lm = LANDMARKS[id]; for (let i=0;i<lm.count;i++) labels.push(lm.label + (lm.count>1?` (punto ${i+1}/${lm.count})`:'')); });
+  return labels;
+}
+
+function makeCompareSide(canvasEl, statusEl) {
+  return {
+    canvas: canvasEl, ctx: canvasEl.getContext('2d'), status: statusEl,
+    img: null, scale: 1,
+    progress: [], // puntos del ángulo actualmente en marcado
+    measurements: {} // angleId -> {angleDeg, severity, points}
+  };
+}
+const compareState = {
+  activeAngleId: null,
+  pre: makeCompareSide(document.getElementById('cvPre'), document.getElementById('preStatus')),
+  post: makeCompareSide(document.getElementById('cvPost'), document.getElementById('postStatus'))
+};
+
+const btnCompareToggle = document.getElementById('btnCompareToggle');
+const compareSection = document.getElementById('compareSection');
+const comparePathSel = document.getElementById('comparePathSel');
+const compareAngleChipsEl = document.getElementById('compareAngleChips');
+const compareTableEl = document.getElementById('compareTable');
+const compareNarrowNote = document.getElementById('compareNarrowNote');
+
+btnCompareToggle.addEventListener('click', () => {
+  const isOpen = compareSection.style.display !== 'none';
+  compareSection.style.display = isOpen ? 'none' : 'flex';
+  compareNarrowNote.style.display = (!isOpen && window.innerWidth < 900) ? 'block' : 'none';
+  if (!isOpen) renderCompareAngleChips();
+});
+
+function currentComparePathDef() { return PATHOLOGIES.find(p => p.id === comparePathSel.value); }
+
+comparePathSel.addEventListener('change', () => {
+  compareState.activeAngleId = null;
+  compareState.pre.progress = []; compareState.post.progress = [];
+  renderCompareAngleChips(); renderCompareTable();
+});
+
+function renderCompareAngleChips() {
+  const pdef = currentComparePathDef();
+  compareAngleChipsEl.innerHTML = '';
+  pdef.angles.forEach(a => {
+    const chip = document.createElement('button');
+    const done = compareState.pre.measurements[a.id] && compareState.post.measurements[a.id];
+    chip.textContent = (done ? '✓ ' : '') + a.name;
+    chip.className = (a.id === compareState.activeAngleId) ? '' : 'secondary';
+    chip.style.width = 'auto'; chip.style.fontSize = '12px';
+    chip.addEventListener('click', () => {
+      compareState.activeAngleId = a.id;
+      compareState.pre.progress = []; compareState.post.progress = [];
+      updateCompareStatus(compareState.pre, a); updateCompareStatus(compareState.post, a);
+      redrawCompareSide(compareState.pre); redrawCompareSide(compareState.post);
+      renderCompareAngleChips();
+    });
+    compareAngleChipsEl.appendChild(chip);
+  });
+}
+
+function updateCompareStatus(side, def) {
+  if (!side.img) { side.status.textContent = 'Carga la imagen para comenzar.'; return; }
+  const labels = pointLabelsForDef(def);
+  const n = side.progress.length;
+  side.status.textContent = n < labels.length ? `Marca punto ${n+1}/${labels.length}: ${labels[n]}` : 'Puntos completos.';
+}
+
+function loadCompareImage(side, file) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const im = new Image();
+    im.onload = () => {
+      side.img = im;
+      const maxW = 420;
+      side.scale = Math.min(1, maxW / im.width);
+      side.canvas.width = im.width * side.scale;
+      side.canvas.height = im.height * side.scale;
+      side.progress = [];
+      redrawCompareSide(side);
+      if (compareState.activeAngleId) updateCompareStatus(side, currentComparePathDef().angles.find(a=>a.id===compareState.activeAngleId));
+      else side.status.textContent = 'Imagen cargada. Selecciona un ángulo arriba.';
+    };
+    im.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+document.getElementById('btnLoadPre').addEventListener('click', () => {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+  inp.addEventListener('change', (e) => { if (e.target.files[0]) loadCompareImage(compareState.pre, e.target.files[0]); });
+  inp.click();
+});
+document.getElementById('btnLoadPost').addEventListener('click', () => {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+  inp.addEventListener('change', (e) => { if (e.target.files[0]) loadCompareImage(compareState.post, e.target.files[0]); });
+  inp.click();
+});
+document.getElementById('btnResetPre').addEventListener('click', () => { compareState.pre.progress = []; redrawCompareSide(compareState.pre); if (compareState.activeAngleId) updateCompareStatus(compareState.pre, currentComparePathDef().angles.find(a=>a.id===compareState.activeAngleId)); });
+document.getElementById('btnResetPost').addEventListener('click', () => { compareState.post.progress = []; redrawCompareSide(compareState.post); if (compareState.activeAngleId) updateCompareStatus(compareState.post, currentComparePathDef().angles.find(a=>a.id===compareState.activeAngleId)); });
+
+function redrawCompareSide(side) {
+  if (!side.img) return;
+  side.ctx.clearRect(0,0,side.canvas.width,side.canvas.height);
+  side.ctx.drawImage(side.img, 0, 0, side.canvas.width, side.canvas.height);
+  const def = compareState.activeAngleId ? currentComparePathDef().angles.find(a=>a.id===compareState.activeAngleId) : null;
+  if (def) {
+    const stored = side.measurements[def.id];
+    if (stored) drawDefLinesOnCtx(side.ctx, def, stored.points, 1);
+    else if (side.progress.length) {
+      side.progress.forEach((pt,i) => {
+        side.ctx.beginPath(); side.ctx.arc(pt.x,pt.y,5,0,Math.PI*2);
+        side.ctx.fillStyle = i%2===0?'#D85A30':'#378ADD'; side.ctx.fill();
+        side.ctx.strokeStyle = '#fff'; side.ctx.lineWidth = 1.5; side.ctx.stroke();
+      });
+      drawDefLinesOnCtx(side.ctx, def, side.progress, 1);
+    }
+  }
+}
+
+function handleCompareClick(side, e) {
+  if (!side.img || !compareState.activeAngleId) return;
+  const pdef = currentComparePathDef();
+  const def = pdef.angles.find(a => a.id === compareState.activeAngleId);
+  const total = totalPointsForDef(def);
+  if (side.progress.length >= total) return;
+  const rect = side.canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (side.canvas.width / rect.width);
+  const y = (e.clientY - rect.top) * (side.canvas.height / rect.height);
+  side.progress.push({x,y});
+  redrawCompareSide(side);
+  if (side.progress.length === total) {
+    const angleDeg = computeAngleForDef(def, side.progress);
+    const rounded = Math.round(angleDeg * 10) / 10;
+    side.measurements[def.id] = { angleDeg: rounded, severity: def.classify(rounded), points: side.progress.map(p=>({...p})) };
+    side.status.textContent = `${def.name}: ${rounded.toFixed(1)}° — ${def.classify(rounded)}`;
+    renderCompareAngleChips(); renderCompareTable();
+  } else {
+    updateCompareStatus(side, def);
+  }
+}
+compareState.pre.canvas.addEventListener('click', (e) => handleCompareClick(compareState.pre, e));
+compareState.post.canvas.addEventListener('click', (e) => handleCompareClick(compareState.post, e));
+
+function renderCompareTable() {
+  const pdef = currentComparePathDef();
+  const rows = pdef.angles
+    .filter(a => compareState.pre.measurements[a.id] || compareState.post.measurements[a.id])
+    .map(a => {
+      const pre = compareState.pre.measurements[a.id];
+      const post = compareState.post.measurements[a.id];
+      const preTxt = pre ? `${pre.angleDeg.toFixed(1)}° (${pre.severity})` : '—';
+      const postTxt = post ? `${post.angleDeg.toFixed(1)}° (${post.severity})` : '—';
+      const diffTxt = (pre && post) ? `Δ ${(post.angleDeg - pre.angleDeg).toFixed(1)}°` : '';
+      return `<div class="row" style="justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:4px;">
+        <span style="min-width:180px;"><b>${a.name}</b></span>
+        <span>Pre: ${preTxt}</span><span>Post: ${postTxt}</span><span style="font-weight:600;">${diffTxt}</span>
+      </div>`;
+    });
+  compareTableEl.innerHTML = rows.length ? rows.join('') : '<span style="color:var(--text-secondary);">Sin mediciones aún — selecciona un ángulo y marca ambas imágenes.</span>';
+}
+
+document.getElementById('btnCompareExportPdf').addEventListener('click', async () => {
+  if (!compareState.pre.img && !compareState.post.img) { alert('Carga al menos una imagen para exportar.'); return; }
+  const btn = document.getElementById('btnCompareExportPdf');
+  const original = btn.textContent; btn.textContent = 'Cargando...'; btn.disabled = true;
+  try { await loadJsPdf(); } catch (err) { alert(err.message); btn.textContent = original; btn.disabled = false; return; }
+  btn.textContent = original; btn.disabled = false;
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let y = 40;
+  doc.setFontSize(14); doc.text('Comparación Pre-operatorio / Post-operatorio', 40, y); y += 20;
+  doc.setFontSize(10);
+  doc.text(`Patología: ${currentComparePathDef().name}  |  Lado: ${sideSel.value}  |  ID: ${patientIdInput.value || '—'}  |  Fecha: ${new Date().toLocaleString()}`, 40, y); y += 20;
+
+  const halfWidth = (pageWidth - 100) / 2;
+  if (compareState.pre.img) {
+    const h = halfWidth * (compareState.pre.canvas.height / compareState.pre.canvas.width);
+    doc.text('Pre-operatorio', 40, y);
+    doc.addImage(compareState.pre.canvas.toDataURL('image/png'), 'PNG', 40, y+8, halfWidth, h);
+  }
+  if (compareState.post.img) {
+    const h = halfWidth * (compareState.post.canvas.height / compareState.post.canvas.width);
+    doc.text('Post-operatorio', 60 + halfWidth, y);
+    doc.addImage(compareState.post.canvas.toDataURL('image/png'), 'PNG', 60 + halfWidth, y+8, halfWidth, h);
+  }
+  y += halfWidth * 0.9 + 30;
+  if (y > pageHeight - 100) { doc.addPage(); y = 40; }
+
+  doc.setFontSize(11); doc.text('Resultados comparativos:', 40, y); y += 16;
+  doc.setFontSize(10);
+  currentComparePathDef().angles.forEach(a => {
+    const pre = compareState.pre.measurements[a.id]; const post = compareState.post.measurements[a.id];
+    if (!pre && !post) return;
+    if (y > pageHeight - 60) { doc.addPage(); y = 40; }
+    const preTxt = pre ? `${pre.angleDeg.toFixed(1)}° (${pre.severity})` : '—';
+    const postTxt = post ? `${post.angleDeg.toFixed(1)}° (${post.severity})` : '—';
+    const diffTxt = (pre && post) ? `  |  Δ ${(post.angleDeg - pre.angleDeg).toFixed(1)}°` : '';
+    doc.text(`${a.name}: Pre ${preTxt}  →  Post ${postTxt}${diffTxt}`, 40, y);
+    y += 14;
+  });
+
+  doc.setFontSize(8); doc.setTextColor(120);
+  doc.text('Herramienta de apoyo para marcado manual. No constituye diagnóstico automático.', 40, pageHeight - 30);
+  doc.save('comparacion_preop_postop.pdf');
+});
+
+window.addEventListener('resize', () => {
+  if (compareSection.style.display !== 'none') compareNarrowNote.style.display = window.innerWidth < 900 ? 'block' : 'none';
+});
 
 refreshAll();
 </script>
