@@ -158,6 +158,20 @@
 
   <div id="partsList" style="display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--text-secondary);"></div>
 
+  <div id="sesamoidTools" class="row" style="display:none; background:var(--surface-1); padding:10px; border-radius:var(--radius); border:1px solid var(--border);">
+    <span style="font-size:13px;">Sesamoideo tibial:</span>
+    <button id="btnToolCircle" class="secondary">⚪ Círculo</button>
+    <button id="btnToolFreeform" class="secondary">✏️ Forma libre</button>
+    <button id="btnFinalizeFreeform" class="secondary" style="display:none;">Finalizar forma (mín. 3 puntos)</button>
+    <button id="btnResetShape" class="secondary">Reiniciar forma</button>
+    <span style="font-size:13px; margin-left:8px;">Lateral queda hacia:</span>
+    <select id="lateralSideSel">
+      <option value="right">Derecha de la imagen</option>
+      <option value="left">Izquierda de la imagen</option>
+    </select>
+    <span id="sesamoidResultTxt" style="font-size:12px; color:var(--text-secondary);"></span>
+  </div>
+
   <div id="cobbLabels" class="row" style="display:none;">
     <select id="curveType">
       <option value="Torácica">Torácica</option>
@@ -243,9 +257,12 @@ const PATHOLOGIES = [
         parts: ['axis_1mtt','artic_surface_distal_1mtt'], classify: a => a < 6 ? 'Normal' : 'Aumentado' },
       { id: 'metaducto', name: 'Metatarso aducto (eje mediopié)', construction: 'perp_bisector',
         parts: ['axis_2mtt','axis_midfoot_medial','axis_midfoot_lateral'],
-        classify: a => a < 15 ? 'Normal' : (a <= 20 ? 'Leve' : (a <= 25 ? 'Moderado' : 'Severo')) }
+        classify: a => a < 15 ? 'Normal' : (a <= 20 ? 'Leve' : (a <= 25 ? 'Moderado' : 'Severo')) },
+      { id: 'sesamoidhc', name: 'Posición sesamoidea tibial (Hardy-Clapham)', construction: 'sesamoid',
+        parts: ['axis_1mtt'],
+        classify: g => g <= 4 ? `Posición normal (grado ${g}/VII)` : `Desplazamiento lateral / subluxación (grado ${g}/VII)` }
     ],
-    sequence: ['im12','hva','dasa','metaducto']
+    sequence: ['im12','hva','dasa','metaducto','sesamoidhc']
   },
   { id: 'pieplanocavo', name: 'Pie plano / Pie cavo', projection: 'Dorsoplantar y Lateral con carga',
     angles: [
@@ -349,6 +366,7 @@ let pxPerMm = null;
 let calibrating = false;
 let calibPoints = [];
 let undoStack = []; // {undo: fn}
+let sesamoidShape = { tool: 'circle', center: null, edge: null, freeformPts: [], finalized: false };
 
 function currentPath() { return PATHOLOGIES[currentPathIdx]; }
 function currentAngleDef() {
@@ -427,6 +445,16 @@ function selectAngle(angleId) {
     if (stored && stored.length === count) return { landmarkId, points: stored.slice(), fromStore: true };
     return { landmarkId, points: [], fromStore: false };
   });
+  if (def.construction === 'sesamoid') {
+    const p = currentPath();
+    const existing = measurements[p.id] && measurements[p.id][def.id];
+    if (existing) {
+      sesamoidShape = { ...JSON.parse(JSON.stringify(existing.shape)), finalized: true };
+      document.getElementById('lateralSideSel').value = existing.lateralSide;
+    } else {
+      sesamoidShape = { tool: 'circle', center: null, edge: null, freeformPts: [], finalized: false };
+    }
+  }
   refreshCanvasAndHelp();
 }
 
@@ -476,6 +504,10 @@ function renderPartsList() {
 
 function refreshCanvasAndHelp() {
   const p = currentPath();
+  const def = (!p.isCobb && !p.isDistance) ? currentAngleDef() : null;
+  const sesamoidToolsEl = document.getElementById('sesamoidTools');
+  sesamoidToolsEl.style.display = (def && def.construction === 'sesamoid') ? 'flex' : 'none';
+
   if (p.isCobb) {
     status.textContent = img ? 'Marca el punto 1 (platillo superior EVS)' : 'Carga una imagen para comenzar';
   } else if (p.isDistance) {
@@ -484,6 +516,16 @@ function refreshCanvasAndHelp() {
     else status.textContent = img ? `Marca punto ${distanceInProgress.length+1}/2 de: ${currentDistanceDef().name}` : 'Carga una imagen para comenzar';
   } else if (!currentAngleId) {
     status.textContent = img ? 'Selecciona un ángulo de la lista de arriba' : 'Carga una imagen para comenzar';
+  } else if (def && def.construction === 'sesamoid') {
+    const idx = firstIncompletePartIndex();
+    if (idx !== -1) {
+      const lm = LANDMARKS[partsProgress[idx].landmarkId];
+      status.textContent = img ? `Marca punto ${partsProgress[idx].points.length+1}/${lm.count} de: ${lm.label}` : 'Carga una imagen para comenzar';
+    } else if (!sesamoidShape.finalized) {
+      status.textContent = 'Eje listo. Elige herramienta (círculo o forma libre) y dibuja el contorno del sesamoideo tibial.';
+    } else {
+      status.textContent = 'Forma registrada. Verifica el lado lateral si es necesario — el grado se recalcula solo.';
+    }
   } else {
     const idx = firstIncompletePartIndex();
     if (idx === -1) status.textContent = 'Todos los puntos listos (algunos reutilizados). Ángulo calculado abajo.';
@@ -495,7 +537,7 @@ function refreshCanvasAndHelp() {
   }
   renderPartsList();
   draw();
-  if (!p.isCobb && !p.isDistance && currentAngleId && firstIncompletePartIndex() === -1) computeAndStore();
+  if (!p.isCobb && !p.isDistance && currentAngleId && def && def.construction !== 'sesamoid' && firstIncompletePartIndex() === -1) computeAndStore();
 }
 
 // ============ ZOOM ============
@@ -623,6 +665,25 @@ function handlePointerDown(e) {
   }
 
   if (!currentAngleId) return;
+  const def = currentAngleDef();
+
+  if (def.construction === 'sesamoid' && firstIncompletePartIndex() === -1) {
+    if (sesamoidShape.finalized) return; // usa "Reiniciar forma" para volver a marcar
+    if (sesamoidShape.tool === 'circle') {
+      if (!sesamoidShape.center) { sesamoidShape.center = {x,y}; draw(); document.getElementById('sesamoidResultTxt').textContent = 'Marca el borde del círculo (radio).'; return; }
+      sesamoidShape.edge = {x,y};
+      sesamoidShape.finalized = true;
+      computeSesamoidGrade();
+      refreshCanvasAndHelp();
+      return;
+    } else { // freeform
+      sesamoidShape.freeformPts.push({x,y});
+      draw();
+      document.getElementById('sesamoidResultTxt').textContent = `${sesamoidShape.freeformPts.length} puntos marcados — presiona "Finalizar forma" cuando esté lista.`;
+      return;
+    }
+  }
+
   const idx = firstIncompletePartIndex();
   if (idx === -1) return;
   partsProgress[idx].points.push({x,y});
@@ -637,7 +698,10 @@ function handlePointerDown(e) {
   } else {
     renderPartsList();
     const nextIdx = firstIncompletePartIndex();
-    if (nextIdx === -1) { computeAndStore(); status.textContent = 'Medición completa. Puntos reutilizables quedan guardados para otros ángulos.'; }
+    if (nextIdx === -1) {
+      if (def.construction === 'sesamoid') { refreshCanvasAndHelp(); }
+      else { computeAndStore(); status.textContent = 'Medición completa. Puntos reutilizables quedan guardados para otros ángulos.'; }
+    }
     else { const nlm = LANDMARKS[partsProgress[nextIdx].landmarkId]; status.textContent = `Marca punto 1/${nlm.count} de: ${nlm.label}`; }
   }
 }
@@ -752,6 +816,74 @@ function computeAndStore() {
   renderAngleChips(); renderResults(); draw();
 }
 
+// ============ POSICIÓN SESAMOIDEA TIBIAL (Hardy-Clapham) ============
+// Aproximación cuantitativa del sistema original (que en Hardy & Clapham 1951 es una
+// comparación visual contra 7 dibujos de referencia, no una fórmula). Aquí se divide el
+// ancho medio-lateral del sesamoideo marcado en 7 zonas iguales respecto al eje del 1er
+// MTT. Es una formalización razonable del sistema, no una reproducción exacta del método
+// original — se lo advertimos al usuario en la propia interfaz.
+
+function signedDistToAxis(pt, axisA, axisB) {
+  const dx = axisB.x - axisA.x, dy = axisB.y - axisA.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy/len, ny = dx/len; // normal unitario
+  return (pt.x - axisA.x) * nx + (pt.y - axisA.y) * ny;
+}
+
+function computeSesamoidGrade() {
+  const p = currentPath();
+  const def = p.angles.find(a => a.id === 'sesamoidhc');
+  if (!def) return;
+  const axisPts = flattenPoints(); // [axisA, axisB] ya completos en este punto
+  if (axisPts.length < 2 || !sesamoidShape.finalized) return;
+  const axisA = axisPts[0], axisB = axisPts[1];
+
+  let minD, maxD;
+  if (sesamoidShape.tool === 'circle') {
+    const r = Math.hypot(sesamoidShape.edge.x - sesamoidShape.center.x, sesamoidShape.edge.y - sesamoidShape.center.y);
+    const centerD = signedDistToAxis(sesamoidShape.center, axisA, axisB);
+    minD = centerD - r; maxD = centerD + r;
+  } else {
+    const dists = sesamoidShape.freeformPts.map(pt => signedDistToAxis(pt, axisA, axisB));
+    minD = Math.min(...dists); maxD = Math.max(...dists);
+  }
+
+  const lateralIsPositive = document.getElementById('lateralSideSel').value === 'right';
+  const sMin = lateralIsPositive ? minD : -maxD;
+  const sMax = lateralIsPositive ? maxD : -minD;
+  const width = sMax - sMin;
+  const lateralPortion = Math.max(0, sMax) - Math.max(0, sMin);
+  const fractionLateral = width > 0 ? Math.min(1, Math.max(0, lateralPortion / width)) : 0;
+  const grade = Math.min(7, Math.max(1, Math.ceil(fractionLateral * 7) || 1));
+
+  const severity = def.classify(grade);
+  if (!measurements[p.id]) measurements[p.id] = {};
+  measurements[p.id][def.id] = {
+    grade, severity, isSesamoid: true, implausible: false,
+    points: [axisA, axisB],
+    shape: { tool: sesamoidShape.tool, center: sesamoidShape.center, edge: sesamoidShape.edge, freeformPts: sesamoidShape.freeformPts },
+    lateralSide: document.getElementById('lateralSideSel').value
+  };
+  document.getElementById('sesamoidResultTxt').textContent = `Grado ${grade}/VII — ${severity}`;
+  partsProgress.forEach(pp => { landmarkStore[pp.landmarkId] = pp.points.map(pt => ({...pt})); });
+  renderAngleChips(); renderResults(); draw();
+}
+
+document.getElementById('btnToolCircle').addEventListener('click', () => { sesamoidShape = { tool:'circle', center:null, edge:null, freeformPts:[], finalized:false }; document.getElementById('btnFinalizeFreeform').style.display='none'; draw(); });
+document.getElementById('btnToolFreeform').addEventListener('click', () => { sesamoidShape = { tool:'freeform', center:null, edge:null, freeformPts:[], finalized:false }; document.getElementById('btnFinalizeFreeform').style.display='inline-block'; draw(); });
+document.getElementById('btnResetShape').addEventListener('click', () => {
+  sesamoidShape = { tool: sesamoidShape.tool, center:null, edge:null, freeformPts:[], finalized:false };
+  document.getElementById('sesamoidResultTxt').textContent = '';
+  draw();
+});
+document.getElementById('btnFinalizeFreeform').addEventListener('click', () => {
+  if (sesamoidShape.freeformPts.length < 3) { document.getElementById('sesamoidResultTxt').textContent = 'Marca al menos 3 puntos para cerrar la forma.'; return; }
+  sesamoidShape.finalized = true;
+  computeSesamoidGrade();
+  refreshCanvasAndHelp();
+});
+document.getElementById('lateralSideSel').addEventListener('change', () => { if (sesamoidShape.finalized) computeSesamoidGrade(); });
+
 function computeDistance() {
   const def = currentDistanceDef();
   const pxDist = Math.hypot(distanceInProgress[1].x - distanceInProgress[0].x, distanceInProgress[1].y - distanceInProgress[0].y);
@@ -774,19 +906,32 @@ function draw() {
       Object.keys(measurements[p.id]).forEach((angleId, i) => {
         if (angleId === currentAngleId) return;
         const m = measurements[p.id][angleId];
-        drawDefLines(p.angles.find(a=>a.id===angleId), m.points, palette[i % palette.length], 0.4);
+        const angleDef = p.angles.find(a=>a.id===angleId);
+        if (angleDef.construction === 'sesamoid') drawSesamoidOnCtx(ctx, m.points, m.shape, palette[i % palette.length], 0.4);
+        else drawDefLines(angleDef, m.points, palette[i % palette.length], 0.4);
       });
     }
     if (currentAngleId) {
       const def = currentAngleDef();
-      const pts = flattenPoints();
-      pts.forEach((pt,i) => {
-        ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2);
-        ctx.fillStyle = i % 2 === 0 ? '#D85A30' : '#378ADD';
-        ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-        ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText(String(i+1), pt.x+8, pt.y-8);
-      });
-      drawDefLines(def, pts, null, 1, true);
+      if (def.construction === 'sesamoid') {
+        const pts = flattenPoints();
+        pts.forEach((pt,i) => {
+          ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2);
+          ctx.fillStyle = i % 2 === 0 ? '#D85A30' : '#378ADD';
+          ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        });
+        if (pts.length >= 2) drawLine(pts[0], pts[1], '#D85A30', 1);
+        drawSesamoidOnCtx(ctx, pts, sesamoidShape, '#B85CD6', 1, true);
+      } else {
+        const pts = flattenPoints();
+        pts.forEach((pt,i) => {
+          ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2);
+          ctx.fillStyle = i % 2 === 0 ? '#D85A30' : '#378ADD';
+          ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.fillText(String(i+1), pt.x+8, pt.y-8);
+        });
+        drawDefLines(def, pts, null, 1, true);
+      }
     }
   } else if (p.isCobb) {
     cobbCurves.forEach((c, idx) => drawSimpleLines(c.points, palette[idx % palette.length], 1));
@@ -877,6 +1022,24 @@ function drawSimpleLines(pts, col, alpha) {
   if (pts.length >= 2) drawLine(pts[0], pts[1], col, alpha);
   if (pts.length >= 4) drawLine(pts[2], pts[3], col, alpha);
 }
+function drawSesamoidOnCtx(ctxTarget, axisPts, shape, col, alpha, live) {
+  if (!shape) return;
+  ctxTarget.globalAlpha = alpha;
+  ctxTarget.strokeStyle = col; ctxTarget.lineWidth = 2;
+  if (shape.tool === 'circle' && shape.center) {
+    const r = shape.edge ? Math.hypot(shape.edge.x - shape.center.x, shape.edge.y - shape.center.y) : 0;
+    ctxTarget.beginPath(); ctxTarget.arc(shape.center.x, shape.center.y, r, 0, Math.PI*2); ctxTarget.stroke();
+    ctxTarget.beginPath(); ctxTarget.arc(shape.center.x, shape.center.y, 3, 0, Math.PI*2); ctxTarget.fillStyle = col; ctxTarget.fill();
+  } else if (shape.tool === 'freeform' && shape.freeformPts && shape.freeformPts.length) {
+    ctxTarget.beginPath();
+    shape.freeformPts.forEach((pt,i) => { if (i===0) ctxTarget.moveTo(pt.x,pt.y); else ctxTarget.lineTo(pt.x,pt.y); });
+    if (!live || shape.finalized) ctxTarget.closePath();
+    ctxTarget.stroke();
+    shape.freeformPts.forEach(pt => { ctxTarget.beginPath(); ctxTarget.arc(pt.x,pt.y,3,0,Math.PI*2); ctxTarget.fillStyle = col; ctxTarget.fill(); });
+  }
+  ctxTarget.globalAlpha = 1;
+}
+
 function drawDefLines(def, pts, forcedCol, alpha, live) {
   const colA = forcedCol || '#D85A30';
   const colB = forcedCol || '#378ADD';
@@ -997,7 +1160,8 @@ function renderResults() {
     const def = p.angles.find(a => a.id === angleId);
     const r = m[angleId];
     const warn = r.implausible ? ' <span title="Valor fuera de todo rango fisiológico plausible — probable error de marcado" style="color:#c0392b;">⚠️ revisar puntos</span>' : '';
-    return `<div class="row" style="justify-content:space-between;"><span>${def.name}</span><span style="font-weight:500;">${r.angleDeg.toFixed(1)}° — ${r.severity}${warn}</span></div>`;
+    const valueTxt = r.isSesamoid ? `Grado ${r.grade}/VII` : `${r.angleDeg.toFixed(1)}°`;
+    return `<div class="row" style="justify-content:space-between;"><span>${def.name}</span><span style="font-weight:500;">${valueTxt} — ${r.severity}${warn}</span></div>`;
   }).join('');
   resultCard.style.display = 'block';
   validationNote.textContent = getValidationNote(p);
@@ -1007,6 +1171,12 @@ function renderResults() {
     angles: Object.keys(m).map(angleId => {
       const def = p.angles.find(a => a.id === angleId);
       const r = m[angleId];
+      if (r.isSesamoid) {
+        return { angle_id: angleId, angle_name: def.name, method: 'Hardy-Clapham (aproximación cuantitativa por zonas, no comparación pictórica original)',
+          axis_landmarks: r.points.map(pt => [Math.round(pt.x/scale), Math.round(pt.y/scale)]),
+          shape_type: r.shape.tool, lateral_side_in_image: r.lateralSide,
+          hardy_clapham_grade: r.grade, severity: r.severity };
+      }
       return { angle_id: angleId, angle_name: def.name,
         landmarks: r.points.map(pt => [Math.round(pt.x/scale), Math.round(pt.y/scale)]),
         angle_degrees: r.angleDeg, severity: r.severity, plausibility_warning: r.implausible || false };
@@ -1033,7 +1203,7 @@ document.getElementById('btnNarrative').addEventListener('click', () => {
     lines.push(`Estudio radiológico de ${p.name.toLowerCase()}, pie ${sideTxt}.`);
     Object.keys(measurements[p.id]).forEach(angleId => {
       const def = p.angles.find(a => a.id === angleId); const r = measurements[p.id][angleId];
-      lines.push(`${def.name}: ${r.angleDeg.toFixed(1)}° (${r.severity}).`);
+      lines.push(r.isSesamoid ? `${def.name}: grado ${r.grade}/VII (${r.severity}).` : `${def.name}: ${r.angleDeg.toFixed(1)}° (${r.severity}).`);
     });
     const note = getValidationNote(p);
     if (note) lines.push(note.replace('⚠️ ',''));
@@ -1107,6 +1277,7 @@ document.getElementById('btnExportPdf').addEventListener('click', async () => {
     });
     else if (measurements[p.id]) entries = Object.keys(measurements[p.id]).map(aid => {
       const def = p.angles.find(a => a.id === aid); const r = measurements[p.id][aid];
+      if (r.isSesamoid) return `${def.name}: grado ${r.grade}/VII — ${r.severity}`;
       return `${def.name}: ${r.angleDeg.toFixed(1)}°${r.implausible ? ' [revisar: posible error de marcado]' : ''} — ${r.severity}`;
     });
     if (entries.length === 0) return;
